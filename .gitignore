@@ -1,0 +1,7 @@
+# Secrets
+.env
+.env.*
+
+# Go build output
+/bin/
+*.exe
