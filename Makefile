@@ -30,4 +30,4 @@ agent-run: agent-build
 	  -v "$$(pwd)/demo-project:/workspace" \
 	  --env-file .env \
 	  $(IMAGE) \
-	  "Append exactly one new line reading 'manual run' to notes.md."
+	  "In greeting.go, append the string \"manual run\" to the slice returned by Greetings, update the expected count in greeting_test.go to match, then run 'go test ./...' and confirm it passes."

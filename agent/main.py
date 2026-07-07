@@ -28,8 +28,8 @@ MODEL = "claude-haiku-4-5-20251001"
 def workspace_diff() -> str:
     """Diff the workspace against HEAD, including newly created files.
 
-    `git add -N` records intent-to-add so brand-new files (like notes.md) show
-    up in `git diff` without staging their content. Requires /workspace to be a
+    `git add -N` records intent-to-add so brand-new files show up in `git diff`
+    without staging their content. Requires /workspace to be a
     git repo; the orchestrator/fixture guarantees that.
     """
     subprocess.run(["git", "-C", WORKSPACE, "add", "-N", "."], check=False)
@@ -49,7 +49,9 @@ async def run_harness(task: str) -> dict:
         # Isolated, single-purpose container — let the harness act without
         # prompting on each edit.
         permission_mode="bypassPermissions",
-        allowed_tools=["Read", "Write", "Edit"],
+        # Bash lets the harness run the project's tests (go test) as it works —
+        # the fixture's edit breaks a test, so the agent needs to run and fix it.
+        allowed_tools=["Read", "Write", "Edit", "Bash"],
     )
     status = "success"
     summary = ""
