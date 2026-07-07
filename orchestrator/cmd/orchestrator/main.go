@@ -29,6 +29,11 @@ func run() error {
 		return err
 	}
 
+	log.Printf("building agent image…")
+	if err := runner.EnsureImage(ctx); err != nil {
+		return err
+	}
+
 	prompt := buildPrompt()
 	log.Printf("launching agent pod; task: %s", prompt)
 
@@ -48,22 +53,22 @@ func run() error {
 	return nil
 }
 
-// buildPrompt is the static task the orchestrator hands the pod. It exercises
-// the whole code-and-test loop in one repeatable step: append one element to a
-// Go function, which breaks a count test, then fix that test and prove it green
-// with `go test`. Sourced here so the prompt travels orchestrator -> pod.
+// buildPrompt is the static task the orchestrator hands the pod. It is two
+// precise, deterministic file edits — no instruction to run or verify anything.
+// The pod only edits; verification runs later in the project's own environment
+// (ADR-0005, ADR-0008). It is fine for the suite to be red between the two edits.
 //
 // Repeatable: each run appends a distinctly-timestamped element and bumps the
-// expected count by one, so the suite is green again every time.
+// expected count by one, keeping code and test in step.
 func buildPrompt() string {
 	stamp := time.Now().UTC().Format("2006-01-02 15:04:05Z")
 	return fmt.Sprintf(
-		"The workspace is a Go module. In greeting.go, append exactly one new "+
-			"element, the string \"ran at %s\", to the slice returned by the "+
-			"Greetings function. That will break the count assertion in "+
-			"greeting_test.go: update the expected count in that test to the new "+
-			"number of elements. Then run `go test ./...` from the workspace root "+
-			"and confirm it passes. Change nothing else.",
+		"Make exactly these two edits in the Go files at the workspace root, and "+
+			"nothing else:\n"+
+			"1. In greeting.go, add one line to the slice returned by the Greetings "+
+			"function: the string \"ran at %s\".\n"+
+			"2. In greeting_test.go, increase the `want` constant by exactly one so "+
+			"it equals the new number of elements in that slice.",
 		stamp,
 	)
 }

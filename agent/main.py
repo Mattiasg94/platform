@@ -49,9 +49,9 @@ async def run_harness(task: str) -> dict:
         # Isolated, single-purpose container — let the harness act without
         # prompting on each edit.
         permission_mode="bypassPermissions",
-        # Bash lets the harness run the project's tests (go test) as it works —
-        # the fixture's edit breaks a test, so the agent needs to run and fix it.
-        allowed_tools=["Read", "Write", "Edit", "Bash"],
+        # The pod only edits files; it does not build or test. Verification runs
+        # in the project's own environment (ADR-0008), so no Bash tool here.
+        allowed_tools=["Read", "Write", "Edit"],
     )
     status = "success"
     summary = ""

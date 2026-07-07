@@ -3,28 +3,18 @@
 # Two runtimes on purpose. Python is our entrypoint language, but the Python
 # SDK is only a thin client — the actual agent harness is the Claude Code CLI,
 # a Node program the SDK launches as a subprocess. So the image needs Node
-# (the harness) *and* Python (our entrypoint + the client binding). See
-# agent/README.md for the full why.
+# (the harness) *and* Python (our entrypoint + the client binding).
 FROM node:20-bookworm-slim
 
+# The image stays language-agnostic on purpose: no Go, no per-project toolchains.
+# The pod only edits files. Building and testing the edited code happens in the
+# *project's own* declared environment (ADR-0008), not here.
+#
 # Python runtime for our entrypoint and the SDK client; git so the pod can diff
-# the workspace it edited (the result contract); curl + ca-certificates to fetch
-# the Go toolchain below.
+# the workspace it edited (the result contract).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 python3-pip git curl ca-certificates \
+    && apt-get install -y --no-install-recommends python3 python3-pip git \
     && rm -rf /var/lib/apt/lists/*
-
-# Go toolchain, so the pod can run the fixture's tests (go test) as part of the
-# verify-in-pod loop. INTERIM: baking a language into the harness image is the
-# per-runtime anti-pattern we flagged — it doesn't scale to polyglot repos. The
-# durable design is the *project* declaring its own environment (devcontainer /
-# its own Dockerfile) and the harness layering on top. Fine while there's one Go
-# fixture and we're proving the loop; revisit before a second language appears.
-ARG GO_VERSION=1.23.4
-RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o /tmp/go.tgz \
-    && tar -C /usr/local -xzf /tmp/go.tgz \
-    && rm /tmp/go.tgz
-ENV PATH="/usr/local/go/bin:${PATH}"
 
 # The harness itself: the Claude Code CLI (Node) that the Python SDK spawns.
 # Pinned: the harness churns per release, so an unpinned build could pull a
