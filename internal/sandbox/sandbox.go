@@ -2,17 +2,10 @@ package sandbox
 
 import "context"
 
+// Sandbox is the isolation seam (ADR-0004): a container the orchestrator can
+// create and tear down. Kept deliberately small — it grows only when a slice
+// needs it to.
 type Sandbox interface {
 	Start(ctx context.Context) error
 	Destroy(ctx context.Context) error
-}
-
-// ExecResult is the outcome of running a command in the sandbox: stdout,
-// stderr, and exit code as ordinary data. A non-zero ExitCode is not an
-// error — it's the command's own outcome, same as a developer reading a
-// failing terminal command.
-type ExecResult struct {
-	Stdout   string
-	Stderr   string
-	ExitCode int
 }

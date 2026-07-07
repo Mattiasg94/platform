@@ -69,8 +69,10 @@ were the point.)
 opinionated commodity layer — the inner agent loop (parsing edits to files,
 context/token management, the turn loop). You *could* build it, but it churns
 every model release and off-the-shelf now beats a hand-roll → **rent it**
-(Claude Agent SDK or similar), behind the `Brain` interface so it never
-hardens into vendor-lock. What you **build** is the platform around it:
+(Claude Agent SDK or similar). Per ADR-0007 the rented coding loop runs
+*inside* the sandbox pod, so its anti-lock-in seam is the pod's I/O contract
+(repo in, task in, result out), not an in-process wrapper. What you **build**
+is the platform around it:
 durable orchestration, a separate verification runtime, feedback loops,
 deployment, observability. That platform is the career core — it's what
 transfers. (Full Spotify/Honk evidence → `garbage.md`.)
@@ -82,9 +84,10 @@ one app, not the whole system — the generic skeleton is what makes the work
 transfer to any LLM application.
 
 **Build behind swappable interfaces.** Every substrate/commodity you rent
-sits behind an interface you own (`Brain`, `Sandbox`, `ToolExecutor`). Build
-the concrete thing you need now behind the interface, so the
-deferred/harder/rented version slots in later without touching callers.
+sits behind a seam you own — the `Sandbox` interface, a `Brain` for the
+orchestrator's own decision loop, and the pod's I/O contract for the rented
+coding loop (ADR-0007). Build the concrete thing you need now behind the seam,
+so the deferred/harder/rented version slots in later without touching callers.
 
 **Never hand-roll a throwaway for a build-to-learn seam.** Classify each seam
 first: is its *target* a rented commodity, or the transferable skill itself?
@@ -106,7 +109,7 @@ same shape (capability → trigger) rather than treating the doc as closed.
 | Capability | Example tool(s) | Build now, or gated on... |
 |---|---|---|
 | Durable, resumable workflow execution | Temporal | **Build now — your workflows *on* Temporal**, not a reimplementation of it. Temporal's replay engine is rented substrate (nobody rebuilds it); the durable orchestration *policy* on top is the crown-jewel build — that's what platform teams hire for. Pays off once runs get long or multi-step; loop is already shaped for it. |
-| The inner agent loop (file-edit, context/token mgmt, turn loop) | Claude Agent SDK, OpenAI Agents SDK | **Rent now** — commodity that churns each model release; keep behind the `Brain` interface so it isn't vendor-lock. |
+| The inner agent loop (file-edit, context/token mgmt, turn loop) | Claude Agent SDK, OpenAI Agents SDK | **Rent now** — commodity that churns each model release; runs inside the pod, kept swappable by the pod's I/O contract (ADR-0007). |
 | Adversarial verification (separate runtime; the agent can't verify or cheat on its own work) | your own CI + git diff, isolated runtime | Build when the agent acts on its own output unattended (opens PRs, self-verifies). Keep it **light**. |
 | Agent feedback loops (build/test/lint results fed back so it self-corrects) | your own wiring + real CI signals | **Build early** — highest-leverage reliability lever, entirely yours to build. |
 | Stronger sandbox isolation (beyond a plain container) | Docker Sandboxes (Firecracker microVM), gVisor, E2B | Gate on: someone other than you can submit input. Swaps the walls, not your policy. |
@@ -135,4 +138,4 @@ Not "never" — "no concrete trigger yet, don't build preemptively":
 2. Is it a rent-or-build call? Apply the three rent/build principles above.
 3. If it's a "production-grade" capability, is its trigger true *today*, or
    is it being added because it *feels* like what a real system would have?
-4. Keep the seam it plugs into swappable (`Brain`, `Sandbox`, `ToolExecutor`).
+4. Keep the seam it plugs into swappable (`Sandbox`, `Brain`, or the pod's I/O contract per ADR-0007).

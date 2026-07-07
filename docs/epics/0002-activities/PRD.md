@@ -1,3 +1,12 @@
+# PRD: Orchestrator Coding Activities — SUPERSEDED
+
+> **SUPERSEDED by ADR-0007 (Architecture B).** This epic planned a Go-side
+> Read/Write/Bash "Activities" + adapter layer that piped tools into the sandbox
+> (Architecture A). That path was not taken: under ADR-0007 the coding harness
+> runs *inside* the pod and owns its own tools, so this layer was removed
+> (`internal/tools`, `internal/activities`, `internal/session`). Kept for history
+> only — not the active plan. The code is the source of truth.
+
 ## Business Goal & Objective
 
 Give the orchestrator its first real coding capability — the ability to read, write, and execute code inside its sandbox — as the next milestone toward a self-hosted, provider-agnostic, fully autonomous coding agent. This milestone is explicitly built to *mimic* the shape of a Temporal-backed production system (Workflow / Activity separation, typed inputs/outputs) without yet introducing Temporal itself, so the later migration is a lift, not a rewrite.

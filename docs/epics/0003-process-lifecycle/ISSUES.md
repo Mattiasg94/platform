@@ -1,4 +1,8 @@
-# Issues: Sandbox Process Lifecycle
+# Issues: Sandbox Process Lifecycle — SUPERSEDED
+
+> **SUPERSEDED by ADR-0007 (Architecture B).** The persistent-shell Exec this
+> slice built was removed when the harness moved inside the pod. Kept for history
+> only.
 
 Vertical slices for the persistent-shell sandbox.
 

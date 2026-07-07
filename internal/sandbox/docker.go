@@ -7,10 +7,8 @@ import (
 	"log"
 	"path/filepath"
 	"runtime"
-	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	dockerimage "github.com/docker/docker/api/types/image"
@@ -34,17 +32,6 @@ const (
 type DockerSandbox struct {
 	cli         *client.Client
 	containerID string
-
-	// shell is the one persistent shell process kept alive for the
-	// container's lifetime; every Exec call writes into it instead of
-	// spawning a fresh Docker exec. shellMu serializes Exec calls since a
-	// single shell can only run one command at a time. shellLastWorkdir
-	// tracks the last workdir a caller explicitly asked for, so a call that
-	// leaves workdir at its default doesn't stomp a `cd` the shell already
-	// ran on the model's behalf.
-	shell            types.HijackedResponse
-	shellMu          sync.Mutex
-	shellLastWorkdir string
 }
 
 func NewDockerSandbox(cli *client.Client) *DockerSandbox {
@@ -123,34 +110,6 @@ func (s *DockerSandbox) Start(ctx context.Context) error {
 		return fmt.Errorf("sandbox: start container: %w", err)
 	}
 	log.Printf("sandbox: started container %s", s.containerID[:12])
-
-	if err := s.startShell(ctx); err != nil {
-		return err
-	}
-	return nil
-}
-
-// startShell launches the single long-lived shell that every Exec call
-// writes into, and keeps its connection open for the sandbox's lifetime.
-func (s *DockerSandbox) startShell(ctx context.Context) error {
-	created, err := s.cli.ContainerExecCreate(ctx, s.containerID, container.ExecOptions{
-		Cmd:          []string{"sh"},
-		WorkingDir:   WorkspaceRoot,
-		AttachStdin:  true,
-		AttachStdout: true,
-		AttachStderr: true,
-	})
-	if err != nil {
-		return fmt.Errorf("sandbox: create shell exec: %w", err)
-	}
-
-	attached, err := s.cli.ContainerExecAttach(ctx, created.ID, container.ExecAttachOptions{})
-	if err != nil {
-		return fmt.Errorf("sandbox: attach shell exec: %w", err)
-	}
-
-	s.shell = attached
-	s.shellLastWorkdir = WorkspaceRoot
 	return nil
 }
 
@@ -165,10 +124,6 @@ func (s *DockerSandbox) Destroy(ctx context.Context) error {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-	}
-
-	if s.shell.Conn != nil {
-		s.shell.Close()
 	}
 
 	id := s.containerID

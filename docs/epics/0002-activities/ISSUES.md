@@ -1,4 +1,9 @@
-# Issues: Orchestrator Coding Activities
+# Issues: Orchestrator Coding Activities — SUPERSEDED
+
+> **SUPERSEDED by ADR-0007 (Architecture B).** These slices built the
+> Architecture-A tool layer (typed Activities + provider adapter) that was later
+> removed when the harness moved inside the pod. Unchecked issues here will not
+> be built as written. Kept for history only.
 
 ## Issue 1: Switch sandbox image to Go toolchain
 

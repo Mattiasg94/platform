@@ -37,9 +37,12 @@ working system is the vehicle; the career outcome is the point.
   separate verification runtime, feedback loops, the permissions seam,
   observability.
 
-Everything rented sits behind an interface I own (`Brain`, `Sandbox`,
-`ToolExecutor`) so it stays swappable. The evidence for every rent/build call is
-in `references.md`; the ADRs themselves are in `adr/`.
+Everything rented sits behind a seam I own (`Sandbox`, and a `Brain` for the
+orchestrator's own decision loop) so it stays swappable. The rented *coding* loop
+is the special case: per ADR-0007 it runs *inside* the pod, so its anti-lock-in
+seam is the pod's I/O contract (repo in, task in, result out), not an in-process
+interface. The evidence for every rent/build call is in `references.md`; the ADRs
+themselves are in `adr/`.
 
 ---
 

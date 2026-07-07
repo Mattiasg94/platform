@@ -1,4 +1,10 @@
-# PRD: Sandbox Process Lifecycle
+# PRD: Sandbox Process Lifecycle — SUPERSEDED
+
+> **SUPERSEDED by ADR-0007 (Architecture B).** The persistent-shell design this
+> epic delivered served a Go-side brain piping many stateful commands into the
+> sandbox (Architecture A). Under ADR-0007 the harness runs inside the pod and
+> executes its own commands, so the persistent-shell/marker/demux code was
+> removed. Kept for history only — not the active plan.
 
 ## Business Goal & Objective
 

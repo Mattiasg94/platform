@@ -1,6 +1,8 @@
 # 0001 — Rent the inner agent loop (Claude Agent SDK), don't build it
 
-**Status:** Accepted
+**Status:** Accepted — refined by 0007 (the rented loop runs *inside* the
+sandbox; the anti-lock-in seam is the pod I/O contract, not an in-process
+`Brain` interface).
 
 **Context:** The inner agent loop — file-edit parsing, tool-use turn loop,
 context/token management — is tempting to build and I nearly did (I was going to
