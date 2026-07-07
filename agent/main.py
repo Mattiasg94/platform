@@ -1,16 +1,22 @@
 """Agent pod entrypoint — run the rented coding harness on the mounted workspace.
 
-Baked into the container image. On start it hands the Claude Agent SDK one
-hard-coded task and lets the harness edit /workspace directly, then exits.
-This is roadmap step 1 (ADR-0007): prove the rented coding loop runs *inside*
-the sandbox, unattended, and produces a real edit we can see on the host.
+Baked into the container image. The orchestrator launches this image with the
+repo bind-mounted at /workspace and hands it a task as the single command-line
+argument. The harness edits /workspace directly, then this script returns a
+structured result on stdout — the pod's I/O contract (ADR-0007): task in,
+{status, summary, diff} out.
 
-The workspace is bind-mounted at /workspace; the API key arrives as
-ANTHROPIC_API_KEY in the environment. Model is Haiku (cheapest) on purpose —
-the point is the plumbing, not the reasoning.
+Conventions that keep the contract clean:
+- The harness's streaming messages go to *stderr* (human-visible trace).
+- *stdout* carries nothing but the final JSON result, so the orchestrator can
+  parse it without demuxing chatter.
+
+Model is Haiku (cheapest) on purpose — the point is the plumbing.
 """
 
-from datetime import datetime, timezone
+import json
+import subprocess
+import sys
 
 import anyio
 from claude_agent_sdk import ClaudeAgentOptions, query
@@ -19,36 +25,52 @@ WORKSPACE = "/workspace"
 MODEL = "claude-haiku-4-5-20251001"
 
 
-def build_task() -> str:
-    """One deterministic, repeatable edit: append a timestamped line.
+def workspace_diff() -> str:
+    """Diff the workspace against HEAD, including newly created files.
 
-    The timestamp is computed here rather than asked of the model, so the run
-    proves 'the harness can edit the workspace' without also depending on the
-    model correctly fetching the time. Repeated runs stack visible lines.
+    `git add -N` records intent-to-add so brand-new files (like notes.md) show
+    up in `git diff` without staging their content. Requires /workspace to be a
+    git repo; the orchestrator/fixture guarantees that.
     """
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-    return (
-        f"Append exactly one new line reading 'agent ran at {stamp}' to the "
-        f"end of notes.md in the current directory. Create notes.md if it does "
-        f"not exist. Change nothing else, and do not reformat existing lines."
+    subprocess.run(["git", "-C", WORKSPACE, "add", "-N", "."], check=False)
+    done = subprocess.run(
+        ["git", "-C", WORKSPACE, "diff"],
+        capture_output=True,
+        text=True,
+        check=False,
     )
+    return done.stdout
 
 
-async def run() -> None:
+async def run_harness(task: str) -> dict:
     options = ClaudeAgentOptions(
         model=MODEL,
         cwd=WORKSPACE,
         # Isolated, single-purpose container — let the harness act without
-        # prompting for permission on each edit.
+        # prompting on each edit.
         permission_mode="bypassPermissions",
         allowed_tools=["Read", "Write", "Edit"],
     )
-    async for message in query(prompt=build_task(), options=options):
-        # Stream the harness's messages to stdout so the orchestrator (and we,
-        # by hand for now) can see what it did. The structured result contract
-        # comes in roadmap step 2; for the skeleton, printing is enough.
-        print(message)
+    status = "success"
+    summary = ""
+    async for message in query(prompt=task, options=options):
+        print(message, file=sys.stderr)  # trace, kept off stdout
+        if type(message).__name__ == "ResultMessage":
+            summary = getattr(message, "result", "") or ""
+            status = "error" if getattr(message, "is_error", False) else "success"
+    return {"status": status, "summary": summary}
+
+
+def main() -> None:
+    if len(sys.argv) < 2 or not sys.argv[1].strip():
+        json.dump({"status": "error", "summary": "no task provided", "diff": ""}, sys.stdout)
+        sys.exit(1)
+
+    task = sys.argv[1]
+    result = anyio.run(run_harness, task)
+    result["diff"] = workspace_diff()
+    json.dump(result, sys.stdout)  # the ONLY thing on stdout: the result contract
 
 
 if __name__ == "__main__":
-    anyio.run(run)
+    main()

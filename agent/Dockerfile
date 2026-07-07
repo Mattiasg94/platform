@@ -7,17 +7,20 @@
 # agent/README.md for the full why.
 FROM node:20-bookworm-slim
 
-# Python runtime for our entrypoint and the SDK client.
+# Python runtime for our entrypoint and the SDK client; git so the pod can diff
+# the workspace it edited (the result contract).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 python3-pip \
+    && apt-get install -y --no-install-recommends python3 python3-pip git \
     && rm -rf /var/lib/apt/lists/*
 
 # The harness itself: the Claude Code CLI (Node) that the Python SDK spawns.
-RUN npm install -g @anthropic-ai/claude-code
+# Pinned: the harness churns per release, so an unpinned build could pull a
+# breaking version silently. Bump deliberately.
+RUN npm install -g @anthropic-ai/claude-code@2.1.197
 
 # The Python binding that drives that CLI.
 # --break-system-packages: fine in a single-purpose container (PEP 668).
-RUN pip3 install --no-cache-dir --break-system-packages claude-agent-sdk
+RUN pip3 install --no-cache-dir --break-system-packages claude-agent-sdk==0.2.111
 
 WORKDIR /app
 COPY main.py /app/main.py

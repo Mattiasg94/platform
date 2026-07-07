@@ -6,5 +6,6 @@
 /bin/
 *.exe
 
-# Agent-pod run artifact written into the fixture repo
-demo-project/notes.md
+# The fixture repo is its own standalone git repo (a stand-in for any customer
+# repo the agent edits); the platform does not track it.
+demo-project/

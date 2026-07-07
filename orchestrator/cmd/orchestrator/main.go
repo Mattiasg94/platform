@@ -6,12 +6,10 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"syscall"
+	"time"
 
 	"orchestrator/internal/config"
-	"orchestrator/internal/sandbox"
-
-	dockerclient "github.com/docker/docker/client"
+	"orchestrator/internal/pod"
 )
 
 func main() {
@@ -23,39 +21,43 @@ func main() {
 func run() error {
 	config.Load()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		cancel()
-	}()
-
-	dockerCli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
+	runner, err := pod.NewDocker()
 	if err != nil {
-		return fmt.Errorf("docker client: %w", err)
+		return err
 	}
-	defer dockerCli.Close()
 
-	sb := sandbox.NewDockerSandbox(dockerCli)
-	if err := sb.SweepOrphans(ctx); err != nil {
-		return fmt.Errorf("sandbox sweep: %w", err)
-	}
-	if err := sb.Start(ctx); err != nil {
-		return fmt.Errorf("sandbox start: %w", err)
-	}
-	defer func() {
-		if err := sb.Destroy(ctx); err != nil {
-			log.Printf("sandbox destroy: %v", err)
-		}
-	}()
+	prompt := buildPrompt()
+	log.Printf("launching agent pod; task: %s", prompt)
 
-	// No Brain is wired in yet — the hand-rolled loop was pruned (ADR-0006).
-	// Sandbox lifecycle alone is proven here; issue 2 of the walking-skeleton
-	// project wires a rented SDK back in behind the Brain interface.
-	fmt.Println("Orchestrator - sandbox ready (Ctrl+C to exit)")
-	<-ctx.Done()
+	result, err := runner.Run(ctx, prompt)
+	if err != nil {
+		return fmt.Errorf("agent pod: %w", err)
+	}
+
+	log.Printf("pod status: %s", result.Status)
+	log.Printf("pod summary: %s", result.Summary)
+	fmt.Println("--- workspace diff ---")
+	if result.Diff == "" {
+		fmt.Println("(no changes)")
+	} else {
+		fmt.Print(result.Diff)
+	}
 	return nil
+}
+
+// buildPrompt is the static task the orchestrator hands the pod: the same
+// append-a-timestamped-line task we ran by hand, now sourced here so the prompt
+// travels orchestrator -> pod rather than being baked into the pod. Runs
+// repeatedly and safely (it only appends to notes.md, never touches tests).
+func buildPrompt() string {
+	stamp := time.Now().UTC().Format("2006-01-02 15:04:05Z")
+	return fmt.Sprintf(
+		"Append exactly one new line reading 'agent ran at %s' to the end of "+
+			"notes.md in the current directory. Create notes.md if it does not "+
+			"exist. Change nothing else, and do not reformat existing lines.",
+		stamp,
+	)
 }
