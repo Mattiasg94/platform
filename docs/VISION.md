@@ -1,0 +1,138 @@
+# Orchestrator — Vision (decision filter)
+
+**What this doc is for:** a tight filter to hold every new feature against
+*before* building it, so each step builds toward a system — and a skill set —
+worth having, instead of a locally-reasonable step that adds up to the wrong
+thing. It's meant to be injected into a session and stay short: every line
+here should change a build-vs-defer decision. It holds **no** implementation
+state, task lists, or time-ordering — those go stale and live in the roadmap,
+PRDs/ISSUES, or git history.
+
+Companion docs: `references.md` (the external fact-base — how real teams
+build these systems, i.e. what industry treats as rent-vs-build; lean on it to
+answer this doc's questions with facts, not guesses), `garbage.md` (the full
+reasoning/evidence trimmed out of here, kept so nothing's lost), and the
+roadmap (ordered execution plan — the "what next," which this doc deliberately
+does not carry). Living document — revise as the goal sharpens.
+
+## The goal
+
+An **LLM orchestration platform** for autonomous, multi-step agentic
+workflows: a provider-agnostic decision loop that, given a task, drives tools
+inside an isolated sandbox to do real work unattended, with durability and
+guardrails. The **first application** on it is a self-hosted autonomous
+**coding agent** (clone/read a repo, edit, run, iterate).
+
+But the product — and the transferable skill — is the **platform skeleton**,
+not the coding flavor. Swap the tool set and the same skeleton runs any
+agentic workflow (business-ops automation, RAG, document processing). So keep
+the coding agent as *one app*, never the whole system. Built single-user
+first, but production-shaped so "works for me" → "hosted for others" is a
+series of swap-ins, not a rewrite.
+
+## Primary lens: employability
+
+Above all, this project is how you become **employable in AI engineering and
+future-proof your career.** That is the primary goal and takes precedence
+when priorities genuinely conflict. The working system is the vehicle; the
+career outcome is the point. In practice the two rarely fight — the hire-able
+skill *is* the real-system skill — so when choosing between two valid
+options, optimize for **durable, transferable skill** (backend/platform
+fundamentals that survive model churn) over what merely ships or what
+re-teaches a commodity you could rent.
+
+Two other things stay true and bound scope: it has exactly one user (you), so
+don't pay multi-tenant/externally-exposed costs yet; and it's built with
+production-shaped seams so later hardening is additive, not a redesign.
+
+## Decision principles
+
+**Gate complexity on a concrete trigger, not a vibe.** "Production-grade"
+isn't a checklist — each capability is justified by a specific pain that
+starts hurting without it. No trigger yet → correctly out of scope, not
+neglected. For any capability not in the table below, ask the same question:
+what concrete, currently-true pain justifies this *now*? None → defer it and
+write down what would trigger it.
+
+**Rent the substrate, build the policy.** Substrate = the black-box
+foundation nobody rebuilds even at expert companies (Docker/Firecracker
+isolation; Temporal's replay engine). Rent it; learn its interface, not its
+guts. Policy = how *your agent behaves* on top (hang detection, kill
+strategy, what's returned to the model) — the substrate never authors this,
+so build it yourself, once. Test: *"is this a black box even at companies
+that specialize in it?"* Yes → rent. Behavior on top → build. (Building a
+substrate once to *understand* it, then swapping in the rented version behind
+an interface, is legitimate learning — just don't ship the hand-roll as if it
+were the point.)
+
+**Rent the commodity loop, build the platform.** A third category: the
+opinionated commodity layer — the inner agent loop (parsing edits to files,
+context/token management, the turn loop). You *could* build it, but it churns
+every model release and off-the-shelf now beats a hand-roll → **rent it**
+(Claude Agent SDK or similar), behind the `Brain` interface so it never
+hardens into vendor-lock. What you **build** is the platform around it:
+durable orchestration, a separate verification runtime, feedback loops,
+deployment, observability. That platform is the career core — it's what
+transfers. (Full Spotify/Honk evidence → `garbage.md`.)
+
+**Build the skeleton generic.** The platform skeleton (Brain loop + pluggable
+tools + sandbox + orchestration + verification + observability) is
+application-agnostic. Keep the tool layer pluggable so the coding agent is
+one app, not the whole system — the generic skeleton is what makes the work
+transfer to any LLM application.
+
+**Build behind swappable interfaces.** Every substrate/commodity you rent
+sits behind an interface you own (`Brain`, `Sandbox`, `ToolExecutor`). Build
+the concrete thing you need now behind the interface, so the
+deferred/harder/rented version slots in later without touching callers.
+
+**Never hand-roll a throwaway for a build-to-learn seam.** Classify each seam
+first: is its *target* a rented commodity, or the transferable skill itself?
+For a **build-to-learn** seam (durable orchestration on Temporal, the
+verification runtime, feedback loops), the interim must be a *minimal-but-real
+version of the target* — never a hack you'll delete, because the building is
+the point and a throwaway teaches none of the hire-able skill. Interim stubs
+are only for **rent** seams (sandbox, inner loop, observability backend), where
+building the real thing teaches nothing and you swap in the rented version at
+its trigger. One exception: a scaffold that merely *unblocks* a build-to-learn
+seam (e.g. one trivial task so Temporal has something to orchestrate) is fine —
+but invest zero learning effort in it and don't mistake it for the real thing.
+
+## Capability → trigger table
+
+Illustrative, not exhaustive. When a new need shows up, add a row with the
+same shape (capability → trigger) rather than treating the doc as closed.
+
+| Capability | Example tool(s) | Build now, or gated on... |
+|---|---|---|
+| Durable, resumable workflow execution | Temporal | **Build now — your workflows *on* Temporal**, not a reimplementation of it. Temporal's replay engine is rented substrate (nobody rebuilds it); the durable orchestration *policy* on top is the crown-jewel build — that's what platform teams hire for. Pays off once runs get long or multi-step; loop is already shaped for it. |
+| The inner agent loop (file-edit, context/token mgmt, turn loop) | Claude Agent SDK, OpenAI Agents SDK | **Rent now** — commodity that churns each model release; keep behind the `Brain` interface so it isn't vendor-lock. |
+| Adversarial verification (separate runtime; the agent can't verify or cheat on its own work) | your own CI + git diff, isolated runtime | Build when the agent acts on its own output unattended (opens PRs, self-verifies). Keep it **light**. |
+| Agent feedback loops (build/test/lint results fed back so it self-corrects) | your own wiring + real CI signals | **Build early** — highest-leverage reliability lever, entirely yours to build. |
+| Stronger sandbox isolation (beyond a plain container) | Docker Sandboxes (Firecracker microVM), gVisor, E2B | Gate on: someone other than you can submit input. Swaps the walls, not your policy. |
+| LLM tracing / observability | Langfuse, Helicone, OpenTelemetry | Gate on: the agent runs unattended. Career caveat: build a *taste* pre-trigger — job posts expect you to speak to it. |
+| Prompt/eval regression testing | promptfoo, Braintrust | **Strong defer** — gate on repeatedly breaking things you already fixed while iterating on prompts/models. |
+| Prompt versioning/management | (bundled into the tracing tool) | Don't adopt separately — rides along with whichever tracing tool is adopted above. |
+| Local model serving | Ollama, LM Studio | Opportunistic only — dev-loop iteration; never load-bearing (local models weaker at reliable tool-calling). |
+
+## Explicit non-goals for now
+
+Not "never" — "no concrete trigger yet, don't build preemptively":
+- Multi-tenant support / per-user isolation or auth.
+- Managed hosting/deployment infra *as a product* (deploying your own single
+  instance to learn hosting is fine, and belongs on the roadmap).
+- Cost optimization beyond "don't be wasteful."
+- A dedicated prompt-management product separate from tracing.
+- Heavy data engineering (Kafka/streaming, big-data scale) as a forced
+  feature. Light, opportunistic DE via data-shaped observability (structured
+  events → warehouse → dbt → metrics over agent runs) is welcome; the heavy
+  end is a separate later module, only if hybrid data roles stay a target.
+
+## How to use this doc when designing a feature
+
+1. Does the feature serve the goal (the platform, or its first app), or solve
+   a problem the goal doesn't have?
+2. Is it a rent-or-build call? Apply the three rent/build principles above.
+3. If it's a "production-grade" capability, is its trigger true *today*, or
+   is it being added because it *feels* like what a real system would have?
+4. Keep the seam it plugs into swappable (`Brain`, `Sandbox`, `ToolExecutor`).
