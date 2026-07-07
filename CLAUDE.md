@@ -1,9 +1,20 @@
 # Project Context
 
+## Layout
+
+This repo is the **platform** monorepo — one project, two isolated components
+that only ever talk through the pod's I/O contract (ADR-0007):
+
+- `orchestrator/` — Go. The supervising brain: launches the pod, collects the
+  result. Its own module; knows nothing of the agent's language.
+- `agent/` — Python. The rented coding harness (Claude Agent SDK) baked into a
+  container image. Edits the mounted workspace and exits.
+
+`demo-project/` is the fixture repo the agent edits. `docs/` is shared.
+
 ## Docs
 
-`docs/` is the canonical source of truth for the orchestrator. This repo knows
-only about itself — there is no multi-project layer. The docs split directly
+`docs/` is the canonical source of truth for the platform. It splits directly
 into **epics**, each with its own `PRD.md`/`ISSUES.md` under
 `docs/epics/<NNNN-slug>/` — see `docs/working-method.md` §3. For the full map and
 reading order, start at `docs/map.md`, then `docs/working-method.md` §8.

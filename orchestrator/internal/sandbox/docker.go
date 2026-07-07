@@ -43,9 +43,10 @@ func NewDockerSandbox(cli *client.Client) *DockerSandbox {
 // the process's working directory.
 func demoProjectHostPath() string {
 	_, thisFile, _, _ := runtime.Caller(0)
-	// this file: orchestrator/internal/sandbox/docker.go
-	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
-	return filepath.Join(repoRoot, "demo-project")
+	// this file: platform/orchestrator/internal/sandbox/docker.go
+	// three levels up is the monorepo root (platform/), which holds demo-project.
+	monorepoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
+	return filepath.Join(monorepoRoot, "demo-project")
 }
 
 // buildMounts returns the sandbox's fixed bind mount: the demo project on the
