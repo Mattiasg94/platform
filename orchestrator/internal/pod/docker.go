@@ -106,7 +106,9 @@ func (d *Docker) Run(ctx context.Context, prompt string) (Result, error) {
 	}
 	id := created.ID
 	// Best-effort cleanup; the container is one-shot.
-	defer d.cli.ContainerRemove(context.WithoutCancel(ctx), id, container.RemoveOptions{Force: true})
+	defer func() {
+		_ = d.cli.ContainerRemove(context.WithoutCancel(ctx), id, container.RemoveOptions{Force: true})
+	}()
 
 	if err := d.cli.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
 		return Result{}, fmt.Errorf("start pod: %w", err)
@@ -129,7 +131,7 @@ func (d *Docker) Run(ctx context.Context, prompt string) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("read pod logs: %w", err)
 	}
-	defer logs.Close()
+	defer func() { _ = logs.Close() }()
 
 	var stdout, stderr bytes.Buffer
 	if _, err := stdcopy.StdCopy(&stdout, &stderr, logs); err != nil {

@@ -1,0 +1,29 @@
+# golangci-lint config (v2 schema).
+#
+# Formatting is handled by gofmt in the Makefile, so no formatters here —
+# this file is only about finding bugs and smells.
+
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # Start from golangci-lint's curated "standard" set (errcheck, govet,
+  # ineffassign, staticcheck, unused) and add a few high-signal extras.
+  default: standard
+  enable:
+    - bodyclose    # HTTP/Docker response bodies must be closed
+    - misspell     # catches typos in comments and strings
+    - unconvert    # flags redundant type conversions
+    - errorlint    # correct error wrapping (%w) and errors.Is/As usage
+    - unparam      # unused/always-constant function parameters (dead params)
+    - nolintlint   # polices the //nolint suppressions themselves (see below)
+
+  settings:
+    nolintlint:
+      # A suppression must name the specific linter and carry a reason, so every
+      # //nolint is narrow and justified — never a blanket silencer.
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
