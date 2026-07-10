@@ -4,12 +4,8 @@ Baked into the container image. The orchestrator launches this image with the
 repo bind-mounted at /workspace and hands it a task as the single command-line
 argument. The harness edits /workspace directly, then this script returns a
 structured result on stdout — the pod's I/O contract (ADR-0007): task in,
-{status, summary, diff} out.
-
-Conventions that keep the contract clean:
-- The harness's streaming messages go to *stderr* (human-visible trace).
-- *stdout* carries nothing but the final JSON result, so the orchestrator can
-  parse it without demuxing chatter.
+{status, summary, diff} out. Trace goes to stderr so stdout carries only that
+JSON.
 
 Model is Haiku (cheapest) on purpose — the point is the plumbing.
 """
@@ -47,11 +43,13 @@ async def run_harness(task: str) -> dict:
         model=MODEL,
         cwd=WORKSPACE,
         # Isolated, single-purpose container — let the harness act without
-        # prompting on each edit.
+        # prompting on each command.
         permission_mode="bypassPermissions",
-        # The pod only edits files; it does not build or test. Verification runs
-        # in the project's own environment (ADR-0008), so no Bash tool here.
-        allowed_tools=["Read", "Write", "Edit"],
+        # Read/Write/Edit to change the code; Bash so the agent can run the
+        # project's `make test` and iterate on failures — its own feedback loop.
+        # This is the agent's *untrusted* self-check (it could game it); the
+        # trusted verification is a separate step the agent can't touch.
+        allowed_tools=["Read", "Write", "Edit", "Bash"],
     )
     status = "success"
     summary = ""

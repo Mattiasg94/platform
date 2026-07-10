@@ -1,19 +1,17 @@
-# Agent pod: the rented coding harness (Claude Agent SDK) baked into an image.
-#
-# Two runtimes on purpose. Python is our entrypoint language, but the Python
-# SDK is only a thin client — the actual agent harness is the Claude Code CLI,
-# a Node program the SDK launches as a subprocess. So the image needs Node
-# (the harness) *and* Python (our entrypoint + the client binding).
-FROM node:20-bookworm-slim
+# Agent pod: the coding harness (Claude Agent SDK) layered on top of the project's
+# own environment. BASE_IMAGE is that environment image (built from the project's
+# own Dockerfile), so it already carries the project's toolchain; we add only the
+# harness — the same set for every project, whatever its language. Supersedes the
+# earlier "language-agnostic, edit-only" harness image (ADR-0008, now due a revisit).
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
 
-# The image stays language-agnostic on purpose: no Go, no per-project toolchains.
-# The pod only edits files. Building and testing the edited code happens in the
-# *project's own* declared environment (ADR-0008), not here.
-#
-# Python runtime for our entrypoint and the SDK client; git so the pod can diff
-# the workspace it edited (the result contract).
+# The harness's own runtimes (not the project's): Python for our entrypoint and
+# SDK client, Node + npm for the Claude Code CLI the SDK spawns, git for the diff.
+# From Debian, not NodeSource: the external repo's DNS failed mid-build and
+# silently left Node without npm. Debian's Node 18 runs the pinned CLI fine.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 python3-pip git \
+    && apt-get install -y --no-install-recommends python3 python3-pip git nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
 # The harness itself: the Claude Code CLI (Node) that the Python SDK spawns.
@@ -28,6 +26,8 @@ RUN pip3 install --no-cache-dir --break-system-packages claude-agent-sdk==0.2.11
 WORKDIR /app
 COPY main.py /app/main.py
 
-# The repo to edit is bind-mounted at /workspace at run time; the API key
-# arrives as ANTHROPIC_API_KEY in the environment. Nothing secret is baked in.
+# The repo is bind-mounted at /workspace and the API key arrives via env at run
+# time — nothing secret is baked in. ENTRYPOINT (not CMD) also clears any CMD from
+# the project base (e.g. the demo's `go test`), so the container runs the harness
+# and the task arrives as the args appended after it.
 ENTRYPOINT ["python3", "/app/main.py"]

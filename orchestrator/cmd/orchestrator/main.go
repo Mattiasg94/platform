@@ -29,7 +29,6 @@ func run() error {
 		return err
 	}
 
-	log.Printf("building agent image…")
 	if err := runner.EnsureImage(ctx); err != nil {
 		return err
 	}
@@ -37,10 +36,12 @@ func run() error {
 	prompt := buildPrompt()
 	log.Printf("launching agent pod; task: %s", prompt)
 
+	runStart := time.Now()
 	result, err := runner.Run(ctx, prompt)
 	if err != nil {
 		return fmt.Errorf("agent pod: %w", err)
 	}
+	log.Printf("pod run — %s", time.Since(runStart).Round(time.Millisecond))
 
 	log.Printf("pod status: %s", result.Status)
 	log.Printf("pod summary: %s", result.Summary)
@@ -53,22 +54,24 @@ func run() error {
 	return nil
 }
 
-// buildPrompt is the static task the orchestrator hands the pod. It is two
-// precise, deterministic file edits — no instruction to run or verify anything.
-// The pod only edits; verification runs later in the project's own environment
-// (ADR-0005, ADR-0008). It is fine for the suite to be red between the two edits.
+// buildPrompt is the task the orchestrator hands the pod. It gives the agent a
+// goal and lets it verify its own work with the project's `make test`, iterating
+// on failures — the agent's feedback loop. Adding a greeting breaks the test's
+// count assertion, so the agent must notice the red suite and fix it, which is
+// exactly the loop we want to exercise. This is the agent's own *untrusted*
+// check; trusted verification is a separate step the agent can't touch (a later
+// slice, ADR-0005).
 //
-// Repeatable: each run appends a distinctly-timestamped element and bumps the
-// expected count by one, keeping code and test in step.
+// Repeatable: each run appends a distinctly-timestamped greeting.
 func buildPrompt() string {
 	stamp := time.Now().UTC().Format("2006-01-02 15:04:05Z")
 	return fmt.Sprintf(
-		"Make exactly these two edits in the Go files at the workspace root, and "+
-			"nothing else:\n"+
-			"1. In greeting.go, add one line to the slice returned by the Greetings "+
-			"function: the string \"ran at %s\".\n"+
-			"2. In greeting_test.go, increase the `want` constant by exactly one so "+
-			"it equals the new number of elements in that slice.",
+		"In the Go project at the workspace root, add a new greeting to the slice "+
+			"returned by the Greetings function in greeting.go: the string "+
+			"\"ran at %s\". Then run `make test` to check your work; if the suite "+
+			"fails, fix whatever legitimately needs fixing and re-run `make test` "+
+			"until it passes. The suite must genuinely pass — do not delete, skip, "+
+			"or weaken tests to force it.",
 		stamp,
 	)
 }

@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
@@ -18,8 +20,13 @@ import (
 )
 
 const (
-	// Image is the baked agent pod (built from agent/Dockerfile).
+	// Image is the baked agent pod (built from agent/Dockerfile), layered on top
+	// of ProjectEnvImage.
 	Image = "agent-pod"
+	// ProjectEnvImage is the project's declared environment (built from the
+	// project's own Dockerfile). It carries the project's toolchain and is the
+	// base the agent image is composed onto.
+	ProjectEnvImage = "demo-project-env"
 	// WorkspaceRoot is where the repo is mounted inside the pod.
 	WorkspaceRoot = "/workspace"
 )
@@ -50,18 +57,50 @@ func NewDocker() (*Docker, error) {
 	return &Docker{cli: cli}, nil
 }
 
-// EnsureImage builds the agent pod image from source so the orchestrator
-// initiates everything itself — no build step outside the process. Local-dev
-// convenience; in the cloud this becomes a registry pull of a prebuilt, tagged
-// image. The build is cached, so a no-change rebuild is near-instant.
+// EnsureImage builds the pod image in two layers, so the orchestrator drives
+// the whole build itself with no external step: the project's declared
+// environment (its own Dockerfile, carrying the project toolchain) as the base,
+// then the agent harness layered on top. In the cloud these become registry
+// pulls of prebuilt images. Builds are cached, so a no-change rebuild is
+// near-instant.
 func (d *Docker) EnsureImage(ctx context.Context) error {
-	cmd := exec.CommandContext(ctx, "docker", "build", "-t", Image, agentHostPath())
-	cmd.Stdout = os.Stderr // build chatter is trace, not result — keep it off stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	// --target env: the source-free toolchain stage, so editing the workspace
+	// doesn't invalidate the agent image layered on top of it.
+	if err := timed("build project env image ("+ProjectEnvImage+")", func() error {
+		return dockerBuild(ctx, ProjectEnvImage, demoProjectHostPath(), "--target", "env")
+	}); err != nil {
+		return fmt.Errorf("build project env image: %w", err)
+	}
+	if err := timed("build agent image ("+Image+")", func() error {
+		return dockerBuild(ctx, Image, agentHostPath(), "--build-arg", "BASE_IMAGE="+ProjectEnvImage)
+	}); err != nil {
 		return fmt.Errorf("build agent image: %w", err)
 	}
 	return nil
+}
+
+// timed runs fn, logging the stage name up front and its wall-clock duration
+// when it finishes. Prototyping aid: the image builds are the slow part, so
+// seeing each stage's time (and which one is cached vs cold) is what makes the
+// feedback loop's cost visible instead of a mystery minute.
+func timed(stage string, fn func() error) error {
+	log.Printf("%s…", stage)
+	start := time.Now()
+	err := fn()
+	log.Printf("%s — %s", stage, time.Since(start).Round(time.Millisecond))
+	return err
+}
+
+// dockerBuild shells out to `docker build -t <tag> [extra...] <contextDir>`,
+// sending build chatter to stderr so stdout stays clean for the pod result
+// contract.
+func dockerBuild(ctx context.Context, tag, contextDir string, extra ...string) error {
+	args := append([]string{"build", "-t", tag}, extra...)
+	args = append(args, contextDir)
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // resolveDockerHost asks the docker CLI for the active context's daemon
@@ -87,7 +126,7 @@ func (d *Docker) Run(ctx context.Context, prompt string) (Result, error) {
 	created, err := d.cli.ContainerCreate(ctx,
 		&container.Config{
 			Image:      Image,
-			Cmd:        []string{prompt}, // the task, sourced from the orchestrator
+			Cmd:        []string{prompt},
 			Env:        []string{"ANTHROPIC_API_KEY=" + apiKey, "HOME=/tmp"},
 			User:       fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
 			WorkingDir: WorkspaceRoot,

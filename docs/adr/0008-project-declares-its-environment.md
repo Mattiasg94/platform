@@ -1,6 +1,6 @@
 # 0008 — The project declares its own build/test environment
 
-**Status:** Accepted
+**Status:** Superseded by ADR-0009
 
 **Context:** The agent edits code, and that code has to be built and tested
 somewhere. The tempting shortcut is to bake each language's toolchain into the

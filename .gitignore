@@ -9,3 +9,7 @@
 # The fixture repo is its own standalone git repo (a stand-in for any customer
 # repo the agent edits); the platform does not track it.
 demo-project/
+
+# Python bytecode cache (agent/main.py runs in-container; host copies are stray)
+__pycache__/
+*.pyc
