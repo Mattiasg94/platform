@@ -1,14 +1,6 @@
-"""Agent pod entrypoint — run the rented coding harness on the mounted workspace.
-
-Baked into the container image. The orchestrator launches this image with the
-repo bind-mounted at /workspace and hands it a task as the single command-line
-argument. The harness edits /workspace directly, then this script returns a
-structured result on stdout — the pod's I/O contract (ADR-0007): task in,
-{status, summary, diff} out. Trace goes to stderr so stdout carries only that
-JSON.
-
-Model is Haiku (cheapest) on purpose — the point is the plumbing.
-"""
+"""Agent pod entrypoint: run the harness on /workspace, then print the JSON result
+(status, summary, diff) to stdout. Trace goes to stderr so stdout carries only that
+JSON — the pod's I/O contract (ADR-0007)."""
 
 import json
 import subprocess
@@ -22,12 +14,7 @@ MODEL = "claude-haiku-4-5-20251001"
 
 
 def workspace_diff() -> str:
-    """Diff the workspace against HEAD, including newly created files.
-
-    `git add -N` records intent-to-add so brand-new files show up in `git diff`
-    without staging their content. Requires /workspace to be a
-    git repo; the orchestrator/fixture guarantees that.
-    """
+    # `git add -N` makes new files show in `git diff` without staging their content.
     subprocess.run(["git", "-C", WORKSPACE, "add", "-N", "."], check=False)
     done = subprocess.run(
         ["git", "-C", WORKSPACE, "diff"],
@@ -42,19 +29,14 @@ async def run_harness(task: str) -> dict:
     options = ClaudeAgentOptions(
         model=MODEL,
         cwd=WORKSPACE,
-        # Isolated, single-purpose container — let the harness act without
-        # prompting on each command.
         permission_mode="bypassPermissions",
-        # Read/Write/Edit to change the code; Bash so the agent can run the
-        # project's `make test` and iterate on failures — its own feedback loop.
-        # This is the agent's *untrusted* self-check (it could game it); the
-        # trusted verification is a separate step the agent can't touch.
+        # Bash lets the agent run `make test` and iterate — its own untrusted check.
         allowed_tools=["Read", "Write", "Edit", "Bash"],
     )
     status = "success"
     summary = ""
     async for message in query(prompt=task, options=options):
-        print(message, file=sys.stderr)  # trace, kept off stdout
+        print(message, file=sys.stderr)
         if type(message).__name__ == "ResultMessage":
             summary = getattr(message, "result", "") or ""
             status = "error" if getattr(message, "is_error", False) else "success"
@@ -69,7 +51,7 @@ def main() -> None:
     task = sys.argv[1]
     result = anyio.run(run_harness, task)
     result["diff"] = workspace_diff()
-    json.dump(result, sys.stdout)  # the ONLY thing on stdout: the result contract
+    json.dump(result, sys.stdout)  # stdout carries only the result contract
 
 
 if __name__ == "__main__":

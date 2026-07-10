@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -20,31 +21,22 @@ import (
 )
 
 const (
-	// Image is the baked agent pod (built from agent/Dockerfile), layered on top
-	// of ProjectEnvImage.
-	Image = "agent-pod"
-	// ProjectEnvImage is the project's declared environment (built from the
-	// project's own Dockerfile). It carries the project's toolchain and is the
-	// base the agent image is composed onto.
+	Image           = "agent-pod"
 	ProjectEnvImage = "demo-project-env"
-	// WorkspaceRoot is where the repo is mounted inside the pod.
-	WorkspaceRoot = "/workspace"
+	VerifyImage     = "demo-project-verify"
+	WorkspaceRoot   = "/workspace"
 )
 
-// Docker runs the agent pod as a bounded job on a plain Docker container
-// (ADR-0004). It creates the container, streams the task in, waits for exit,
-// and reads the structured result back off stdout.
+var _ Runner = (*Docker)(nil)
+
 type Docker struct {
 	cli *client.Client
 }
 
 func NewDocker() (*Docker, error) {
 	opts := []client.Opt{client.FromEnv, client.WithAPIVersionNegotiation()}
-	// The Go SDK reads DOCKER_HOST but not docker CLI *contexts*, and Docker
-	// Desktop serves its own socket. When DOCKER_HOST is unset, resolve the
-	// active context's endpoint so the orchestrator finds the daemon on its own
-	// — no external env wiring. In the cloud DOCKER_HOST is set and this is a
-	// no-op.
+	// The Go SDK reads DOCKER_HOST but not docker CLI contexts, so when it's unset
+	// resolve the active context's endpoint ourselves.
 	if os.Getenv("DOCKER_HOST") == "" {
 		if host := resolveDockerHost(); host != "" {
 			opts = append(opts, client.WithHost(host))
@@ -57,15 +49,9 @@ func NewDocker() (*Docker, error) {
 	return &Docker{cli: cli}, nil
 }
 
-// EnsureImage builds the pod image in two layers, so the orchestrator drives
-// the whole build itself with no external step: the project's declared
-// environment (its own Dockerfile, carrying the project toolchain) as the base,
-// then the agent harness layered on top. In the cloud these become registry
-// pulls of prebuilt images. Builds are cached, so a no-change rebuild is
-// near-instant.
 func (d *Docker) EnsureImage(ctx context.Context) error {
-	// --target env: the source-free toolchain stage, so editing the workspace
-	// doesn't invalidate the agent image layered on top of it.
+	// --target env is the source-free toolchain stage; editing the workspace must
+	// not invalidate the agent image layered on top of it.
 	if err := timed("build project env image ("+ProjectEnvImage+")", func() error {
 		return dockerBuild(ctx, ProjectEnvImage, demoProjectHostPath(), "--target", "env")
 	}); err != nil {
@@ -79,10 +65,6 @@ func (d *Docker) EnsureImage(ctx context.Context) error {
 	return nil
 }
 
-// timed runs fn, logging the stage name up front and its wall-clock duration
-// when it finishes. Prototyping aid: the image builds are the slow part, so
-// seeing each stage's time (and which one is cached vs cold) is what makes the
-// feedback loop's cost visible instead of a mystery minute.
 func timed(stage string, fn func() error) error {
 	log.Printf("%s…", stage)
 	start := time.Now()
@@ -91,9 +73,6 @@ func timed(stage string, fn func() error) error {
 	return err
 }
 
-// dockerBuild shells out to `docker build -t <tag> [extra...] <contextDir>`,
-// sending build chatter to stderr so stdout stays clean for the pod result
-// contract.
 func dockerBuild(ctx context.Context, tag, contextDir string, extra ...string) error {
 	args := append([]string{"build", "-t", tag}, extra...)
 	args = append(args, contextDir)
@@ -103,8 +82,33 @@ func dockerBuild(ctx context.Context, tag, contextDir string, extra ...string) e
 	return cmd.Run()
 }
 
-// resolveDockerHost asks the docker CLI for the active context's daemon
-// endpoint (what `DOCKER_HOST` would otherwise hold).
+type Verification struct {
+	Passed bool
+	Output string
+}
+
+// Verify re-runs the suite in a fresh container the agent never touched, so the
+// verdict can't be gamed (ADR-0005). A non-zero test exit is Passed=false, not an
+// error; only failing to run the container at all is an error.
+func (d *Docker) Verify(ctx context.Context) (Verification, error) {
+	if err := timed("build verify image ("+VerifyImage+")", func() error {
+		return dockerBuild(ctx, VerifyImage, demoProjectHostPath(), "--target", "verify")
+	}); err != nil {
+		return Verification{}, fmt.Errorf("build verify image: %w", err)
+	}
+
+	var out bytes.Buffer
+	cmd := exec.CommandContext(ctx, "docker", "run", "--rm", VerifyImage)
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	if err != nil && !errors.As(err, &exitErr) {
+		return Verification{}, fmt.Errorf("run verify image: %w", err)
+	}
+	return Verification{Passed: err == nil, Output: out.String()}, nil
+}
+
 func resolveDockerHost() string {
 	out, err := exec.Command("docker", "context", "inspect", "-f", "{{.Endpoints.docker.Host}}").Output()
 	if err != nil {
@@ -113,10 +117,6 @@ func resolveDockerHost() string {
 	return strings.TrimSpace(string(out))
 }
 
-// Run launches the pod with the task as its command argument, mounts the demo
-// project at the workspace root, and returns the parsed result. The pod prints
-// its JSON result to stdout and its harness trace to stderr; we demux and parse
-// only stdout.
 func (d *Docker) Run(ctx context.Context, prompt string) (Result, error) {
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	if apiKey == "" {
@@ -144,7 +144,6 @@ func (d *Docker) Run(ctx context.Context, prompt string) (Result, error) {
 		return Result{}, fmt.Errorf("create pod: %w", err)
 	}
 	id := created.ID
-	// Best-effort cleanup; the container is one-shot.
 	defer func() {
 		_ = d.cli.ContainerRemove(context.WithoutCancel(ctx), id, container.RemoveOptions{Force: true})
 	}()
@@ -160,8 +159,8 @@ func (d *Docker) Run(ctx context.Context, prompt string) (Result, error) {
 			return Result{}, fmt.Errorf("wait for pod: %w", err)
 		}
 	case <-statusCh:
-		// Exit code isn't load-bearing yet: a non-zero exit still carries a
-		// JSON error result on stdout, which is more informative than the code.
+		// Exit code is ignored: a non-zero exit still carries a JSON error result
+		// on stdout, which is more informative.
 	case <-ctx.Done():
 		return Result{}, ctx.Err()
 	}
@@ -185,23 +184,16 @@ func (d *Docker) Run(ctx context.Context, prompt string) (Result, error) {
 	return result, nil
 }
 
-// demoProjectHostPath resolves the fixture repo the pod edits, relative to this
-// source file so it is independent of the working directory. Stands in for real
-// repo-cloning until that exists.
 func demoProjectHostPath() string {
 	return filepath.Join(monorepoRoot(), "demo-project")
 }
 
-// agentHostPath is the agent image's build context (agent/Dockerfile + main.py).
 func agentHostPath() string {
 	return filepath.Join(monorepoRoot(), "agent")
 }
 
-// monorepoRoot resolves the repo root relative to this source file, so paths are
-// independent of the working directory the orchestrator runs from.
 func monorepoRoot() string {
 	_, thisFile, _, _ := runtime.Caller(0)
-	// this file: platform/orchestrator/internal/pod/docker.go
 	return filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
 }
 
