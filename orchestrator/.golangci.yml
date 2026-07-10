@@ -23,7 +23,7 @@ linters:
   settings:
     nolintlint:
       # A suppression must name the specific linter and carry a reason, so every
-      # //nolint is narrow and justified — never a blanket silencer.
+      # //nolint is narrow and justified — never a blanket silencer
       require-explanation: true
       require-specific: true
       allow-unused: false
