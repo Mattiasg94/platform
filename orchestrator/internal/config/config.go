@@ -17,7 +17,6 @@ type Config struct{}
 // fine — but note `docker --env-file` does not, so keep .env unquoted.
 func Load() *Config {
 	_, thisFile, _, _ := runtime.Caller(0)
-	// this file: platform/orchestrator/internal/config/config.go
 	monorepoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
 	if err := godotenv.Load(filepath.Join(monorepoRoot, ".env")); err != nil {
 		log.Println("No .env file found; using host environment")
