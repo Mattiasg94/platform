@@ -30,10 +30,14 @@ const (
 var _ Runner = (*Docker)(nil)
 
 type Docker struct {
-	cli *client.Client
+	cli        *client.Client
+	projectDir string
 }
 
-func NewDocker() (*Docker, error) {
+// NewDocker binds the runner to projectDir — the checked-out project tree the
+// agent edits. It is the build context for the env/verify images and the source
+// of the workspace bind mount, so one runner is scoped to one checkout.
+func NewDocker(projectDir string) (*Docker, error) {
 	opts := []client.Opt{client.FromEnv, client.WithAPIVersionNegotiation()}
 	// The Go SDK reads DOCKER_HOST but not docker CLI contexts, so when it's unset
 	// resolve the active context's endpoint ourselves.
@@ -46,14 +50,14 @@ func NewDocker() (*Docker, error) {
 	if err != nil {
 		return nil, fmt.Errorf("docker client: %w", err)
 	}
-	return &Docker{cli: cli}, nil
+	return &Docker{cli: cli, projectDir: projectDir}, nil
 }
 
 func (d *Docker) EnsureImage(ctx context.Context) error {
 	// --target env is the source-free toolchain stage; editing the workspace must
 	// not invalidate the agent image layered on top of it.
 	if err := timed("build project env image ("+ProjectEnvImage+")", func() error {
-		return dockerBuild(ctx, ProjectEnvImage, demoProjectHostPath(), "--target", "env")
+		return dockerBuild(ctx, ProjectEnvImage, d.projectDir, "--target", "env")
 	}); err != nil {
 		return fmt.Errorf("build project env image: %w", err)
 	}
@@ -77,9 +81,15 @@ func dockerBuild(ctx context.Context, tag, contextDir string, extra ...string) e
 	args := append([]string{"build", "-t", tag}, extra...)
 	args = append(args, contextDir)
 	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	// Capture build chatter and surface it only on failure; on success the
+	// timed() line is signal enough.
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker build: %w\n%s", err, out.String())
+	}
+	return nil
 }
 
 type Verification struct {
@@ -91,8 +101,18 @@ type Verification struct {
 // verdict can't be gamed (ADR-0005). A non-zero test exit is Passed=false, not an
 // error; only failing to run the container at all is an error.
 func (d *Docker) Verify(ctx context.Context) (Verification, error) {
+	var v Verification
+	err := timed("verification", func() error {
+		var err error
+		v, err = d.verify(ctx)
+		return err
+	})
+	return v, err
+}
+
+func (d *Docker) verify(ctx context.Context) (Verification, error) {
 	if err := timed("build verify image ("+VerifyImage+")", func() error {
-		return dockerBuild(ctx, VerifyImage, demoProjectHostPath(), "--target", "verify")
+		return dockerBuild(ctx, VerifyImage, d.projectDir, "--target", "verify")
 	}); err != nil {
 		return Verification{}, fmt.Errorf("build verify image: %w", err)
 	}
@@ -118,6 +138,16 @@ func resolveDockerHost() string {
 }
 
 func (d *Docker) Run(ctx context.Context, prompt string) (Result, error) {
+	var result Result
+	err := timed("pod run", func() error {
+		var err error
+		result, err = d.runPod(ctx, prompt)
+		return err
+	})
+	return result, err
+}
+
+func (d *Docker) runPod(ctx context.Context, prompt string) (Result, error) {
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	if apiKey == "" {
 		return Result{}, fmt.Errorf("ANTHROPIC_API_KEY not set (checked .env and host env)")
@@ -134,7 +164,7 @@ func (d *Docker) Run(ctx context.Context, prompt string) (Result, error) {
 		&container.HostConfig{
 			Mounts: []mount.Mount{{
 				Type:   mount.TypeBind,
-				Source: demoProjectHostPath(),
+				Source: d.projectDir,
 				Target: WorkspaceRoot,
 			}},
 		},
@@ -182,10 +212,6 @@ func (d *Docker) Run(ctx context.Context, prompt string) (Result, error) {
 			stdout.String(), tail(stderr.String(), 500), err)
 	}
 	return result, nil
-}
-
-func demoProjectHostPath() string {
-	return filepath.Join(monorepoRoot(), "demo-project")
 }
 
 func agentHostPath() string {

@@ -10,7 +10,9 @@ that only ever talk through the pod's I/O contract (ADR-0007):
 - `agent/` — Python. The rented coding harness (Claude Agent SDK) baked into a
   container image. Edits the mounted workspace and exits.
 
-`demo-project/` is the fixture repo the agent edits. `docs/` is shared.
+The agent edits a **project repo cloned from a remote** at run time — a stand-in
+for any customer repo (see `internal/repo`); `demo-project` is the default one,
+its own standalone repo outside this monorepo. `docs/` is shared.
 
 ## Docs
 
