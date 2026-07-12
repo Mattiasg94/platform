@@ -1,17 +1,22 @@
 # Orchestrator — working rules
 
 Go module. All checks run through the `Makefile` — it is the single source of
-truth; CI (later) just calls its targets.
+truth; CI calls its targets (`.github/workflows/` in the repo root).
 
 ## Checks
 
 - **While editing (the AI's loop):** run `make check` — fast: format, vet, lint,
   test. This is the feedback loop, and it must stay green.
-- **Advisory checks are human-run, not the AI's:** `make security`, `make vuln`,
-  `make deadcode`. Do not run these as a gate or auto-"fix" their findings. They
-  surface things Mattias reviews and may consciously accept (a prototype security
-  finding, a vuln with no upstream fix, code that's dead only because it isn't
-  wired up yet). Leave those calls to him.
+- **`make deadcode` gates.** It runs in the pre-commit hook and in CI, and
+  catches unreachable exported code that `unused` can't see. So `make precommit`
+  (check + deadcode) must pass before a commit lands. During editing it's fine
+  for just-written, not-yet-wired code to trip it; wire it up or remove it before
+  committing.
+- **Advisory checks are human-run, not the AI's:** `make security`, `make vuln`.
+  Do not run these as a gate or auto-"fix" their findings. They surface things
+  Mattias reviews and may consciously accept (a prototype security finding, a
+  vuln with no upstream fix). Leave those calls to him. CI runs them in a
+  separate, non-blocking workflow.
 
 ## Suppressing a lint finding
 

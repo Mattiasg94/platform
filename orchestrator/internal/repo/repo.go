@@ -1,13 +1,11 @@
 package repo
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
-	"strings"
 )
 
 // Auth's zero value is an unauthenticated public clone (today's default); it is
@@ -79,11 +77,6 @@ func Push(ctx context.Context, dir, branch string) error {
 	return git(ctx, dir, "push", "-q", "origin", "HEAD:refs/heads/"+branch)
 }
 
-func HeadSHA(ctx context.Context, dir string) (string, error) {
-	out, err := gitOutput(ctx, dir, "rev-parse", "HEAD")
-	return strings.TrimSpace(out), err
-}
-
 func git(ctx context.Context, dir string, args ...string) error {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	// git's chatter must not reach our stdout, which carries the pod result JSON.
@@ -94,17 +87,6 @@ func git(ctx context.Context, dir string, args ...string) error {
 		return fmt.Errorf("git %s: %w", args[0], err)
 	}
 	return nil
-}
-
-func gitOutput(ctx context.Context, dir string, args ...string) (string, error) {
-	var out bytes.Buffer
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	cmd.Stdout = &out
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git %s: %w", args[0], err)
-	}
-	return out.String(), nil
 }
 
 func authenticatedURL(repoURL string, auth Auth) (string, error) {

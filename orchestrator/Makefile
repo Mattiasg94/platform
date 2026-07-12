@@ -15,17 +15,22 @@ DEADCODE_VERSION      := v0.48.0
 GOVULNCHECK_VERSION   := v1.5.0
 GOSEC_VERSION         := v2.27.1
 
-.PHONY: check precommit fmt fmt-check vet lint test deadcode vuln security install-tools
+.PHONY: check ci precommit fmt fmt-check vet lint test deadcode vuln security install-tools install-hooks
 
 # Fast inner loop — what the AI runs while editing. Fail-fast, auto-formats.
 check: fmt vet lint test
 
-# The deterministic gate to run before committing. Right now it is just `check`
-# — there is no deterministic, always-actionable check that only matters at
-# commit time yet. Kept as a stable named target so commit tooling has something
-# to call and more can be added later. The advisory checks (deadcode, vuln,
-# security) are deliberately NOT here — see below.
-precommit: check
+# The blocking CI gate. The inner-loop checks, but formatting is verified rather
+# than applied — CI judges a finished artifact, it does not edit your code —
+# plus dead-code detection. Anything here failing fails the build.
+ci: fmt-check vet lint test deadcode
+
+# Runs on every commit via .githooks/pre-commit (install once with
+# `make install-hooks`). The inner-loop checks plus deadcode, so unreachable
+# code is caught at commit time instead of sitting silently until a human spots
+# it. vuln and security stay advisory — see below.
+precommit: check deadcode
+
 
 # Format code in place. Mechanical, no judgment — just fixes and moves on.
 fmt:
@@ -52,15 +57,27 @@ lint:
 test:
 	go test -race ./...
 
+# Whole-program dead code: unreachable exported funcs/types. golangci-lint's
+# `unused` misses these — it treats every exported symbol as a live entry point,
+# so an exported func with zero callers slips through. This is the check that
+# catches it, which is why it gates `ci` and `precommit`.
+#
+# deadcode always exits 0 (it's built to report, not gate), so we fail the build
+# ourselves when it prints anything. -test treats functions reached only from
+# tests as live, so we don't fail on production code that only tests exercise.
+deadcode:
+	@out="$$(deadcode -test ./...)"; \
+	if [ -n "$$out" ]; then \
+		echo "$$out"; \
+		echo "deadcode: unreachable code found (wire it up or remove it)"; \
+		exit 1; \
+	fi
+
 # --- Advisory checks (human-run) ----------------------------------------------
 # Run these when you want to, not on every save and not as a hard gate. Each can
-# report things you'll consciously choose not to fix — a prototype security
-# finding, a vuln with no upstream fix, code that's dead only because it isn't
-# wired up yet — so they need your judgment rather than blocking.
-
-# Whole-program dead code (unreachable exported funcs/types).
-deadcode:
-	deadcode ./...
+# report something you'll consciously choose not to fix — a prototype security
+# finding, a vuln with no upstream fix — so they need your judgment rather than
+# blocking. CI runs them too, in a separate non-blocking workflow.
 
 # Known vulnerabilities in dependencies we actually call (call-graph aware, so
 # low-noise). Needs the vuln DB (network).
@@ -79,3 +96,9 @@ install-tools:
 	go install golang.org/x/tools/cmd/deadcode@$(DEADCODE_VERSION)
 	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	go install github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION)
+
+# Point git at the version-controlled hooks dir (platform/.githooks) so
+# `make precommit` runs on every commit. Run once per clone.
+install-hooks:
+	git config core.hooksPath .githooks
+	chmod +x ../.githooks/*

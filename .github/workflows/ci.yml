@@ -1,0 +1,42 @@
+name: CI
+
+# The blocking gate: format, vet, lint, tests, and dead-code detection all must
+# pass. Everything runs through the orchestrator Makefile so CI and local runs
+# are identical (same targets, same pinned tool versions).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        # The Go module lives in a subdirectory; the git repo root is one up.
+        working-directory: orchestrator
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: orchestrator/go.mod
+          cache-dependency-path: orchestrator/go.sum
+
+      # Pinned dev tools (golangci-lint, deadcode, …). Cached on the Makefile,
+      # which holds the versions, so we only reinstall when one is bumped.
+      - name: Cache Go tools
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin
+          key: go-tools-${{ runner.os }}-${{ hashFiles('orchestrator/Makefile') }}
+
+      - name: Install pinned tools
+        run: make install-tools
+
+      - name: CI gate
+        run: make ci
