@@ -41,6 +41,14 @@ options, optimize for **durable, transferable skill** (backend/platform
 fundamentals that survive model churn) over what merely ships or what
 re-teaches a commodity you could rent.
 
+Operationally, this lens makes **learning a trigger in its own right.** A
+capability may be built before the system feels any pain when the skill it
+teaches is a career target. Scope it as a deliberate learning module and
+build it minimal-but-real — production-shaped, done properly — because a
+dirty hack teaches nothing and here the learning *is* the deliverable. The
+system being small bounds **scope, never craft**: "one user, one box" is a
+reason to build a small version well, not a rough version fast.
+
 Two other things stay true and bound scope: it has exactly one user (you), so
 don't pay multi-tenant/externally-exposed costs yet; and it's built with
 production-shaped seams so later hardening is additive, not a redesign.
@@ -48,11 +56,13 @@ production-shaped seams so later hardening is additive, not a redesign.
 ## Decision principles
 
 **Gate complexity on a concrete trigger, not a vibe.** "Production-grade"
-isn't a checklist — each capability is justified by a specific pain that
-starts hurting without it. No trigger yet → correctly out of scope, not
-neglected. For any capability not in the table below, ask the same question:
-what concrete, currently-true pain justifies this *now*? None → defer it and
-write down what would trigger it.
+isn't a checklist — each capability is justified by a concrete trigger, and
+**two kinds of trigger count**: a specific pain that starts hurting without
+it, or a named skill target (the employability lens above — learning is a
+trigger in its own right). No trigger of either kind → correctly out of
+scope, not neglected. For any capability not in the table below, ask the
+same question: what concrete, currently-true pain — or skill target —
+justifies this *now*? None → defer it and write down what would trigger it.
 
 **Rent the substrate, build the policy.** Substrate = the black-box
 foundation nobody rebuilds even at expert companies (Docker/Firecracker
@@ -91,8 +101,11 @@ so the deferred/harder/rented version slots in later without touching callers.
 
 **Never hand-roll a throwaway for a build-to-learn seam.** Classify each seam
 first: is its *target* a rented commodity, or the transferable skill itself?
-For a **build-to-learn** seam (durable orchestration on Temporal, the
-verification runtime, feedback loops), the interim must be a *minimal-but-real
+The build-to-learn set is **open, and the call is Mattias's**: any seam
+becomes build-to-learn the moment its skill is a career target (durable
+orchestration on Temporal, the verification runtime, feedback loops are
+examples, not the closed set — the telemetry/data layer joined the same way).
+For a **build-to-learn** seam, the interim must be a *minimal-but-real
 version of the target* — never a hack you'll delete, because the building is
 the point and a throwaway teaches none of the hire-able skill. Interim stubs
 are only for **rent** seams (sandbox, inner loop, observability backend), where
@@ -114,6 +127,8 @@ same shape (capability → trigger) rather than treating the doc as closed.
 | Agent feedback loops (build/test/lint results fed back so it self-corrects) | your own wiring + real CI signals | **Build early** — highest-leverage reliability lever, entirely yours to build. |
 | Stronger sandbox isolation (beyond a plain container) | Docker Sandboxes (Firecracker microVM), gVisor, E2B | Gate on: someone other than you can submit input. Swaps the walls, not your policy. |
 | LLM tracing / observability | Langfuse, Helicone, OpenTelemetry | Gate on: the agent runs unattended. Career caveat: build a *taste* pre-trigger — job posts expect you to speak to it. |
+| System telemetry pipeline (structured logs → collector → store → dashboards) | slog + Vector/OTel Collector, Loki, Grafana | **Build now as a learning module** (skill-target trigger). Rent the collector and backends (substrate); build the instrumentation — structured JSON logs to stdout only, correlation IDs, dashboards. App never knows where logs go. Kafka/Elasticsearch stay out: their trigger is fleet-scale volume. |
+| Business-events pipeline (append-only events table → views → warehouse → dbt) | Postgres now; BigQuery + dbt later | **Events table + SQL views now** (build-to-learn — the data layer is a skill target). Separate pipeline from telemetry: low-volume, loss-intolerant, Postgres is the system of record. Warehouse + dbt gate on: enough run history to analyze. *Copy* events out, never move-and-delete. |
 | Prompt/eval regression testing | promptfoo, Braintrust | **Strong defer** — gate on repeatedly breaking things you already fixed while iterating on prompts/models. |
 | Prompt versioning/management | (bundled into the tracing tool) | Don't adopt separately — rides along with whichever tracing tool is adopted above. |
 | Local model serving | Ollama, LM Studio | Opportunistic only — dev-loop iteration; never load-bearing (local models weaker at reliable tool-calling). |
@@ -139,3 +154,19 @@ Not "never" — "no concrete trigger yet, don't build preemptively":
 3. If it's a "production-grade" capability, is its trigger true *today*, or
    is it being added because it *feels* like what a real system would have?
 4. Keep the seam it plugs into swappable (`Sandbox`, `Brain`, or the pod's I/O contract per ADR-0007).
+
+## How to advise on decisions (for an AI reading this doc)
+
+The system-design skill being trained here is *choosing between paths with
+understanding* — so when a build decision is on the table, lay out the
+realistic option landscape and its trade-offs before recommending, then
+recommend one path and say why. A single pre-collapsed answer defeats the
+point of the exercise.
+
+Never argue "the system is too small to justify doing this properly" —
+smallness bounds scope, not craft (see the employability lens). Suggesting a
+prototype, a thinner first slice, or an iterative path is welcome; steering
+toward a throwaway hack on a build-to-learn seam is not, because the
+learning is the deliverable and a hack teaches nothing. When you'd defer
+something, name the missing trigger (pain or skill target) rather than
+appealing to simplicity.
