@@ -15,8 +15,6 @@ import (
 	"orchestrator/internal/repo"
 )
 
-const maxAttempts = 3
-
 // forge is the slice of the GitHub client this package needs, declared here so a
 // fake can stand in for tests.
 type forge interface {
@@ -31,39 +29,30 @@ type Deps struct {
 	BaseRef   string
 }
 
-// Run builds the images, then loops: the agent edits, a trusted runtime the
-// agent never touched verifies (ADR-0005), and a failure is fed back for another
-// attempt. On a pass it opens a PR and stops.
+// Run builds the images, lets the agent edit once, and opens a PR. The verdict is
+// not ours to give: the project's own CI judges the PR (ADR-0010), which is why
+// there is no retry loop here. The agent's status is only a self-report — it
+// gates publishing a crashed run, nothing more.
 func Run(ctx context.Context, deps Deps) error {
 	if err := deps.Runner.EnsureImage(ctx); err != nil {
 		return err
 	}
 
-	task := prompt.Initial()
-	var lastFailure string
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		log.Printf("attempt %d/%d", attempt, maxAttempts)
-
-		result, err := deps.Runner.Run(ctx, task)
-		if err != nil {
-			return fmt.Errorf("agent pod: %w", err)
-		}
-		log.Printf("pod run status: %s", result.Status)
-
-		verification, err := deps.Runner.Verify(ctx)
-		if err != nil {
-			return fmt.Errorf("verify: %w", err)
-		}
-		if verification.Passed {
-			log.Printf("trusted verification: PASSED on attempt %d", attempt)
-			return publish(ctx, deps)
-		}
-
-		log.Printf("trusted verification: FAILED on attempt %d", attempt)
-		lastFailure = verification.Output
-		task = prompt.Retry(verification.Output)
+	result, err := deps.Runner.Run(ctx, prompt.Initial())
+	if err != nil {
+		return fmt.Errorf("agent pod: %w", err)
 	}
-	return fmt.Errorf("verification failed after %d attempts:\n%s", maxAttempts, lastFailure)
+	log.Printf("pod run status: %s", result.Status)
+	if result.Status != "success" {
+		return fmt.Errorf("agent reported failure: %s", result.Summary)
+	}
+
+	// The agent worked on its own copy, so our clone is still pristine.
+	if err := repo.ApplyDiff(ctx, deps.Workspace, result.Diff); err != nil {
+		return err
+	}
+
+	return publish(ctx, deps)
 }
 
 func publish(ctx context.Context, deps Deps) error {
@@ -81,7 +70,7 @@ func publish(ctx context.Context, deps Deps) error {
 
 	prNumber, err := deps.Forge.OpenPR(ctx, branch, deps.BaseRef,
 		"Automated change by the orchestrator",
-		"Opened by the orchestrator after passing trusted verification. Review its CI and merge manually.")
+		"Opened by the orchestrator. CI is the verdict (ADR-0010) — review it and merge manually.")
 	if err != nil {
 		return err
 	}

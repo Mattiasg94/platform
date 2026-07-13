@@ -9,3 +9,7 @@
 # Python bytecode cache (agent/main.py runs in-container; host copies are stray)
 __pycache__/
 *.pyc
+
+# Downloaded provider binaries. Terraform applies from CI, never from here, so a
+# local .terraform/ is a scratch dir for `fmt` and `validate` and nothing more.
+.terraform/

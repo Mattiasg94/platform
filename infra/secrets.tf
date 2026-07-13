@@ -16,3 +16,22 @@ resource "google_secret_manager_secret" "anthropic_api_key" {
     auto {}
   }
 }
+
+# What the agent actually authenticates with today. It is a subscription token,
+# not a service credential — a deliberate prototype trade, and the wrong shape for
+# production: it belongs to a person rather than to the service, and it expires
+# roughly a year after it is minted, silently.
+#
+# The API key above is kept, unbound, for exactly that reason. Switching back is
+# meant to stay one revert away.
+#
+#   claude setup-token
+#   printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN" | \
+#     gcloud secrets versions add claude-code-oauth-token --data-file=-
+resource "google_secret_manager_secret" "claude_code_oauth_token" {
+  secret_id = "claude-code-oauth-token"
+
+  replication {
+    auto {}
+  }
+}

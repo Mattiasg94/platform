@@ -18,6 +18,8 @@ type Config struct {
 	ProjectOwner   string
 	ProjectRepo    string
 	GitHubToken    string
+	RunsBucket     string
+	GCPProject     string
 }
 
 func Load() (*Config, error) {
@@ -32,6 +34,10 @@ func Load() (*Config, error) {
 		ProjectRepoURL: os.Getenv("PROJECT_REPO_URL"),
 		ProjectRef:     envOr("PROJECT_REF", "main"),
 		GitHubToken:    os.Getenv("GITHUB_TOKEN"),
+		// The blackboard the orchestrator and the agent talk through; Terraform
+		// names it "<project>-runs" (infra/storage.tf).
+		RunsBucket: envOr("RUNS_BUCKET", "ai-agent-502309-runs"),
+		GCPProject: envOr("GCP_PROJECT", "ai-agent-502309"),
 	}
 	if cfg.ProjectRepoURL == "" {
 		return nil, fmt.Errorf("PROJECT_REPO_URL not set (checked .env and host env)")

@@ -12,6 +12,7 @@ import (
 	"orchestrator/internal/orchestrator"
 	"orchestrator/internal/pod"
 	"orchestrator/internal/repo"
+	"orchestrator/internal/runs"
 )
 
 func main() {
@@ -35,7 +36,16 @@ func run() error {
 	}
 	defer cleanup()
 
-	runner, err := pod.NewDocker(workspace)
+	blackboard, err := runs.NewStore(ctx, cfg.RunsBucket)
+	if err != nil {
+		return err
+	}
+
+	// Docker is still here, but demoted to the one job that genuinely needs a local
+	// daemon: building the image. The agent itself runs in the cloud.
+	builder := pod.NewBuilder(workspace, cfg.GCPProject)
+
+	runner, err := pod.NewCloudRun(ctx, builder, cfg.RunsBucket, cfg.GCPProject, blackboard)
 	if err != nil {
 		return err
 	}
