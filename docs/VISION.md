@@ -170,3 +170,13 @@ toward a throwaway hack on a build-to-learn seam is not, because the
 learning is the deliverable and a hack teaches nothing. When you'd defer
 something, name the missing trigger (pain or skill target) rather than
 appealing to simplicity.
+
+Don't optimize for iteration speed or local convenience when the
+production-shaped path *is* the skill target. A fast local loop for developing
+logic is good engineering and always welcome — but reaching for
+local/prototype *because it's quicker to try*, when learning the real thing
+(deployment, hosting, ingress, the cloud substrate) is the deliverable,
+optimizes the wrong objective. The local loop develops the policy; it does not
+substitute for exercising the rented substrate for real. When the two
+genuinely conflict, the production-shaped path wins — here the infrastructure
+*is* the lesson, not friction on the way to it.
