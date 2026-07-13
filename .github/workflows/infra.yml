@@ -1,0 +1,90 @@
+name: Infra
+
+# Terraform runs here and nowhere else. No one applies from a laptop, so the
+# only path from a declaration to a real resource is a reviewed commit on main.
+#
+#   pull request  ->  fmt, validate, plan   (proposal; nothing changes)
+#   push to main  ->  the same, then apply  (the proposal is executed)
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Terraform's state lock already stops two applies from corrupting state — the
+# second would fail on the lock. This stops the second from *starting*, so a
+# lock contention never shows up as a red build.
+concurrency:
+  group: terraform
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # mint the OIDC token that Google trades for credentials
+
+env:
+  TF_IN_AUTOMATION: "true" # drop the "now run terraform apply" hints from output
+  TF_INPUT: "0" # never prompt: a prompt in CI is a hang, not a question
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+
+      # Keyless. There is no service-account JSON in this repo, in a secret, or
+      # on a laptop — nothing to leak and nothing to rotate. GitHub mints a
+      # short-lived OIDC token that says "I am a workflow in Mattiasg94/platform",
+      # and Google trades it for a one-hour access token. The pool's attribute
+      # condition is what makes that safe: without it, *any* repository on GitHub
+      # could present a token and be believed.
+      - uses: google-github-actions/auth@v2
+        with:
+          project_id: ai-agent-502309
+          workload_identity_provider: projects/${{ vars.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/platform-repo
+          service_account: terraform-ci@ai-agent-502309.iam.gserviceaccount.com
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          # The wrapper rewrites stdout to capture it as step outputs, which
+          # mangles the plan. We want the real text.
+          terraform_wrapper: false
+
+      - name: fmt
+        run: terraform fmt -check -recursive
+
+      # No -lockfile=readonly: .terraform.lock.hcl is not committed yet, so the
+      # provider is pinned by constraint (~> 6.0) but not by checksum. To close
+      # that, generate the lock once and commit it — see infra/README.md.
+      - name: init
+        run: terraform init
+
+      - name: validate
+        run: terraform validate
+
+      # -out saves the plan to a file. That is the whole point: apply below is
+      # handed *this* plan, so it cannot do anything the plan did not show.
+      - name: plan
+        run: terraform plan -no-color -out=tfplan
+
+      # The plan is the thing a reviewer is supposed to read, so put it where a
+      # reviewer will actually look instead of 400 lines into a log.
+      #
+      # Safe to publish because no secret *values* live in this configuration —
+      # see secrets.tf. If that ever stops being true, this step has to go.
+      - name: Publish the plan to the run summary
+        run: |
+          {
+            echo '### Terraform plan'
+            echo '```hcl'
+            terraform show -no-color tfplan
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: apply
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: terraform apply -auto-approve tfplan
