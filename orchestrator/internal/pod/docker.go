@@ -6,13 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
@@ -56,33 +54,20 @@ func NewDocker(projectDir string) (*Docker, error) {
 func (d *Docker) EnsureImage(ctx context.Context) error {
 	// --target env is the source-free toolchain stage; editing the workspace must
 	// not invalidate the agent image layered on top of it.
-	if err := timed("build project env image ("+ProjectEnvImage+")", func() error {
-		return dockerBuild(ctx, ProjectEnvImage, d.projectDir, "--target", "env")
-	}); err != nil {
+	if err := dockerBuild(ctx, ProjectEnvImage, d.projectDir, "--target", "env"); err != nil {
 		return fmt.Errorf("build project env image: %w", err)
 	}
-	if err := timed("build agent image ("+Image+")", func() error {
-		return dockerBuild(ctx, Image, agentHostPath(), "--build-arg", "BASE_IMAGE="+ProjectEnvImage)
-	}); err != nil {
+	if err := dockerBuild(ctx, Image, agentHostPath(), "--build-arg", "BASE_IMAGE="+ProjectEnvImage); err != nil {
 		return fmt.Errorf("build agent image: %w", err)
 	}
 	return nil
-}
-
-func timed(stage string, fn func() error) error {
-	log.Printf("%s…", stage)
-	start := time.Now()
-	err := fn()
-	log.Printf("%s — %s", stage, time.Since(start).Round(time.Millisecond))
-	return err
 }
 
 func dockerBuild(ctx context.Context, tag, contextDir string, extra ...string) error {
 	args := append([]string{"build", "-t", tag}, extra...)
 	args = append(args, contextDir)
 	cmd := exec.CommandContext(ctx, "docker", args...)
-	// Capture build chatter and surface it only on failure; on success the
-	// timed() line is signal enough.
+	// Capture build chatter and surface it only on failure.
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -101,19 +86,7 @@ type Verification struct {
 // verdict can't be gamed (ADR-0005). A non-zero test exit is Passed=false, not an
 // error; only failing to run the container at all is an error.
 func (d *Docker) Verify(ctx context.Context) (Verification, error) {
-	var v Verification
-	err := timed("verification", func() error {
-		var err error
-		v, err = d.verify(ctx)
-		return err
-	})
-	return v, err
-}
-
-func (d *Docker) verify(ctx context.Context) (Verification, error) {
-	if err := timed("build verify image ("+VerifyImage+")", func() error {
-		return dockerBuild(ctx, VerifyImage, d.projectDir, "--target", "verify")
-	}); err != nil {
+	if err := dockerBuild(ctx, VerifyImage, d.projectDir, "--target", "verify"); err != nil {
 		return Verification{}, fmt.Errorf("build verify image: %w", err)
 	}
 
@@ -138,16 +111,6 @@ func resolveDockerHost() string {
 }
 
 func (d *Docker) Run(ctx context.Context, prompt string) (Result, error) {
-	var result Result
-	err := timed("pod run", func() error {
-		var err error
-		result, err = d.runPod(ctx, prompt)
-		return err
-	})
-	return result, err
-}
-
-func (d *Docker) runPod(ctx context.Context, prompt string) (Result, error) {
 	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	if apiKey == "" {
 		return Result{}, fmt.Errorf("ANTHROPIC_API_KEY not set (checked .env and host env)")

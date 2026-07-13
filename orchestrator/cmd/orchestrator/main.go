@@ -29,8 +29,6 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	// The token authenticates origin so the branch we push later rides the same
-	// remote (docs/to-do.md tracks the move to a GitHub App token).
 	workspace, cleanup, err := repo.Checkout(ctx, cfg.ProjectRepoURL, cfg.ProjectRef, repo.Auth{Token: cfg.GitHubToken})
 	if err != nil {
 		return fmt.Errorf("checkout project repo: %w", err)
