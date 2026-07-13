@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"time"
 )
 
 // ProjectEnvImage is a local build stage, never pushed: it is only the base the
@@ -59,27 +58,13 @@ func (b *Builder) EnsureImage(ctx context.Context) error {
 func (b *Builder) buildAndPush(ctx context.Context, ref string) error {
 	// --target env is the source-free toolchain stage; editing the workspace must
 	// not invalidate the agent image layered on top of it.
-	if err := timed("build project env image ("+ProjectEnvImage+")", func() error {
-		return dockerBuild(ctx, ProjectEnvImage, b.projectDir, "--target", "env")
-	}); err != nil {
+	if err := dockerBuild(ctx, ProjectEnvImage, b.projectDir, "--target", "env"); err != nil {
 		return fmt.Errorf("build project env image: %w", err)
 	}
-	if err := timed("build agent image ("+ref+")", func() error {
-		return dockerBuild(ctx, ref, agentHostPath(), "--build-arg", "BASE_IMAGE="+ProjectEnvImage)
-	}); err != nil {
+	if err := dockerBuild(ctx, ref, agentHostPath(), "--build-arg", "BASE_IMAGE="+ProjectEnvImage); err != nil {
 		return fmt.Errorf("build agent image: %w", err)
 	}
-	return timed("push agent image", func() error {
-		return dockerPush(ctx, ref)
-	})
-}
-
-func timed(stage string, fn func() error) error {
-	log.Printf("%s…", stage)
-	start := time.Now()
-	err := fn()
-	log.Printf("%s — %s", stage, time.Since(start).Round(time.Millisecond))
-	return err
+	return dockerPush(ctx, ref)
 }
 
 func dockerBuild(ctx context.Context, tag, contextDir string, extra ...string) error {
@@ -94,8 +79,7 @@ func dockerPush(ctx context.Context, ref string) error {
 
 func docker(ctx context.Context, args ...string) error {
 	cmd := exec.CommandContext(ctx, "docker", args...)
-	// Capture the chatter and surface it only on failure; on success the timed()
-	// line is signal enough.
+	// Capture the chatter and surface it only on failure.
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out

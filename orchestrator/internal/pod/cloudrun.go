@@ -55,22 +55,10 @@ func (c *CloudRun) EnsureImage(ctx context.Context) error {
 	if err := c.builder.EnsureImage(ctx); err != nil {
 		return err
 	}
-	return timed("reconcile job definition", func() error {
-		return c.reconcileJob(ctx, c.builder.image)
-	})
+	return c.reconcileJob(ctx, c.builder.image)
 }
 
 func (c *CloudRun) Run(ctx context.Context, prompt string) (Result, error) {
-	var result Result
-	err := timed("pod run", func() error {
-		var err error
-		result, err = c.runPod(ctx, prompt)
-		return err
-	})
-	return result, err
-}
-
-func (c *CloudRun) runPod(ctx context.Context, prompt string) (Result, error) {
 	runID := newRunID()
 	log.Printf("run %s", runID)
 	if err := c.store.PutTask(ctx, runID, prompt); err != nil {
