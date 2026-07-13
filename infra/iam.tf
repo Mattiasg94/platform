@@ -26,9 +26,12 @@ resource "google_storage_bucket_iam_member" "agent_job_runs" {
   member = google_service_account.agent_job.member
 }
 
-# Scoped to one secret, not to Secret Manager as a whole.
-resource "google_secret_manager_secret_iam_member" "agent_job_anthropic_key" {
-  secret_id = google_secret_manager_secret.anthropic_api_key.secret_id
+# Scoped to one secret, not to Secret Manager as a whole — and to the one secret
+# the pod actually reads. The unused API key stays in Secret Manager but is
+# deliberately left unbound: an identity that can read a credential it never uses
+# is an identity larger than its job.
+resource "google_secret_manager_secret_iam_member" "agent_job_claude_token" {
+  secret_id = google_secret_manager_secret.claude_code_oauth_token.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = google_service_account.agent_job.member
 }

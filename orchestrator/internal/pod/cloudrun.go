@@ -16,7 +16,7 @@ const (
 	jobName        = "agent"
 	jobRegion      = "us-central1"
 	agentServiceAc = "agent-job@%s.iam.gserviceaccount.com"
-	anthropicKey   = "anthropic-api-key" // infra/secrets.tf
+	claudeToken    = "claude-code-oauth-token" // infra/secrets.tf
 )
 
 var _ Runner = (*CloudRun)(nil)
@@ -127,13 +127,19 @@ func (c *CloudRun) execute(ctx context.Context, runID string) error {
 }
 
 // reconcileJob makes the job definition match what this run needs, creating it the
-// first time and updating it whenever the image moves. The orchestrator owns this,
-// not Terraform: the image tag is a content hash, so only the thing that computed
-// the hash knows the right value.
+// first time and writing it every time after. The orchestrator owns this, not
+// Terraform: the image tag is a content hash, so only the thing that computed the
+// hash knows the right value.
+//
+// The write is unconditional on purpose. Skipping it when the image is unchanged
+// looks like a free optimisation, but the image is not the spec — the env, the
+// secrets and the service account live here too, and a change to any of them
+// would then never reach the job. An UpdateJob is idempotent and costs a couple of
+// seconds; a job definition that silently lags the code costs an afternoon.
 func (c *CloudRun) reconcileJob(ctx context.Context, image string) error {
 	job := c.jobSpec(image)
 
-	existing, err := c.jobs.GetJob(ctx, &runpb.GetJobRequest{Name: c.jobPath()})
+	_, err := c.jobs.GetJob(ctx, &runpb.GetJobRequest{Name: c.jobPath()})
 	switch {
 	case status.Code(err) == codes.NotFound:
 		op, err := c.jobs.CreateJob(ctx, &runpb.CreateJobRequest{
@@ -148,11 +154,6 @@ func (c *CloudRun) reconcileJob(ctx context.Context, image string) error {
 		return err
 	case err != nil:
 		return fmt.Errorf("get job: %w", err)
-	}
-
-	if currentImage(existing) == image {
-		log.Printf("job %s already points at this image", jobName)
-		return nil
 	}
 
 	job.Name = c.jobPath()
@@ -181,11 +182,16 @@ func (c *CloudRun) jobSpec(image string) *runpb.Job {
 						// the metadata server answers both. This is what the local Docker
 						// runner had to fake with a mounted file.
 						{Name: "HOME", Values: &runpb.EnvVar_Value{Value: "/tmp"}},
+						// The harness bills a subscription, not the API. This is the whole
+						// switch — and it only works because ANTHROPIC_API_KEY is absent:
+						// the CLI ranks the key above the token, so if both were listed here
+						// the key would win silently and we would still be paying. Cloud Run
+						// passes only what this slice names, so leaving it out is enough.
 						{
-							Name: "ANTHROPIC_API_KEY",
+							Name: "CLAUDE_CODE_OAUTH_TOKEN",
 							Values: &runpb.EnvVar_ValueSource{ValueSource: &runpb.EnvVarSource{
 								SecretKeyRef: &runpb.SecretKeySelector{
-									Secret:  anthropicKey,
+									Secret:  claudeToken,
 									Version: "latest",
 								},
 							}},
@@ -196,14 +202,6 @@ func (c *CloudRun) jobSpec(image string) *runpb.Job {
 			},
 		},
 	}
-}
-
-func currentImage(job *runpb.Job) string {
-	containers := job.GetTemplate().GetTemplate().GetContainers()
-	if len(containers) == 0 {
-		return ""
-	}
-	return containers[0].GetImage()
 }
 
 func (c *CloudRun) parent() string {
