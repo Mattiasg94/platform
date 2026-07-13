@@ -1,6 +1,6 @@
 # 0005 — Verification is a separate runtime the agent can't touch
 
-**Status:** Accepted
+**Status:** Superseded by 0010
 
 **Context:** Once the agent acts on its own output unattended (opens PRs,
 self-verifies), it will game any judge it controls. Spotify's agents cheated to

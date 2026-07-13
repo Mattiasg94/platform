@@ -20,12 +20,3 @@ func Initial() string {
 		stamp,
 	)
 }
-
-func Retry(failure string) string {
-	return fmt.Sprintf(
-		"Your previous change to the Go project at the workspace root did not pass "+
-			"verification. Test output:\n\n%s\n\nFix the code so the suite passes, "+
-			"then run `make test` to confirm. Do not delete, skip, or weaken tests.",
-		failure,
-	)
-}

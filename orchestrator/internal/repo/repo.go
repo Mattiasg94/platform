@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // Auth's zero value is an unauthenticated public clone (today's default); it is
@@ -46,6 +47,23 @@ func cloneRef(ctx context.Context, cloneURL, ref, dir string) error {
 		if err := git(ctx, dir, step...); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// ApplyDiff replays the agent's work onto our clone. The agent no longer edits
+// this tree — it works on its own unpacked copy and hands back a patch — so
+// without this the branch we push would be empty.
+func ApplyDiff(ctx context.Context, dir, diff string) error {
+	if strings.TrimSpace(diff) == "" {
+		return fmt.Errorf("the agent returned an empty diff")
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", dir, "apply", "--whitespace=nowarn", "-")
+	cmd.Stdin = strings.NewReader(diff)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("git apply: %w", err)
 	}
 	return nil
 }
