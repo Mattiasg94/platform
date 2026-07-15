@@ -35,3 +35,21 @@ resource "google_secret_manager_secret" "claude_code_oauth_token" {
     auto {}
   }
 }
+
+# What the orchestrator authenticates to GitHub with, to push branches and open
+# PRs once the pipeline is un-stubbed. Same out-of-band pattern as the tokens
+# above — Terraform makes the container, the value is added by hand and never
+# lands in state:
+#
+#   printf '%s' "$GITHUB_TOKEN" | \
+#     gcloud secrets versions add github-token --data-file=-
+#
+# Until a version exists, do not wire this into the Cloud Run service — a revision
+# referencing a versionless secret fails to deploy.
+resource "google_secret_manager_secret" "github_token" {
+  secret_id = "github-token"
+
+  replication {
+    auto {}
+  }
+}

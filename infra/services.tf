@@ -10,6 +10,7 @@
 locals {
   services = [
     "artifactregistry.googleapis.com", # image registry
+    "cloudbuild.googleapis.com",       # building the per-project agent image (Path B)
     "cloudresourcemanager.googleapis.com",
     "iam.googleapis.com",            # service accounts
     "iamcredentials.googleapis.com", # the token exchange CI authenticates with

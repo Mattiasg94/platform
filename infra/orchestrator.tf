@@ -101,3 +101,58 @@ resource "google_service_account_iam_member" "deployer_wif" {
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/github/attribute.repository/${var.github_repo}"
 }
+
+# --- Orchestrator runtime grants ----------------------------------------------
+# What the service is allowed to do once the pipeline is un-stubbed. Until then
+# these sit unused — RUN_PIPELINE gates whether the code paths that need them run,
+# so it is safe to grant them ahead of the code that uses them. This is a step up
+# in reach from the deliberately-powerless agent, which is expected: the
+# orchestrator is the supervisor, not the sandbox.
+
+# Read and write run objects on the blackboard: task in, workspace in, result out.
+resource "google_storage_bucket_iam_member" "orchestrator_runs" {
+  bucket = google_storage_bucket.runs.name
+  role   = "roles/storage.objectUser"
+  member = google_service_account.orchestrator.member
+}
+
+# Check whether the per-project agent image already exists before building it.
+resource "google_artifact_registry_repository_iam_member" "orchestrator_reader" {
+  location   = google_artifact_registry_repository.platform.location
+  repository = google_artifact_registry_repository.platform.name
+  role       = "roles/artifactregistry.reader"
+  member     = google_service_account.orchestrator.member
+}
+
+# Submit Cloud Build builds — the per-project agent image (Path B).
+resource "google_project_iam_member" "orchestrator_cloudbuild" {
+  project = var.project_id
+  role    = "roles/cloudbuild.builds.editor"
+  member  = google_service_account.orchestrator.member
+}
+
+# Create, update, and run the agent Cloud Run job. Project-scoped because creating
+# a job is a project-level action — you cannot scope "create" to a job that does
+# not exist yet. Broader than ideal; tightenable later by having Terraform own the
+# agent job shell so this can drop to run+update on that one job.
+resource "google_project_iam_member" "orchestrator_run" {
+  project = var.project_id
+  role    = "roles/run.developer"
+  member  = google_service_account.orchestrator.member
+}
+
+# Running the agent job means acting as the agent's powerless identity, so the
+# orchestrator needs actAs on it — the same shape as the deployer acting as the
+# orchestrator.
+resource "google_service_account_iam_member" "orchestrator_actas_agent" {
+  service_account_id = google_service_account.agent_job.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = google_service_account.orchestrator.member
+}
+
+# Read the GitHub token to push branches and open PRs.
+resource "google_secret_manager_secret_iam_member" "orchestrator_github_token" {
+  secret_id = google_secret_manager_secret.github_token.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = google_service_account.orchestrator.member
+}
