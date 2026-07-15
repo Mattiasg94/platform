@@ -1,0 +1,62 @@
+name: Agent images
+
+# The build plane for the agent. For each supported project it builds that
+# project's agent image -- the project's own `--target env` stage with the agent
+# harness layered on top (ADR-0009) -- and pushes it as agent-<project>:latest.
+# The orchestrator only *references* these images; it never builds. Adding a
+# project is one line in the matrix below.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agent/**"
+      - ".github/workflows/agent-images.yml"
+  workflow_dispatch: {} # rebuild on demand, e.g. after a project's Dockerfile changes
+
+permissions:
+  contents: read
+  id-token: write # mint the OIDC token Google trades for credentials
+
+env:
+  PROJECT_ID: ai-agent-502309
+  REGION: us-central1
+  REPO: platform
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The projects the platform supports, as owner/name. Each builds its own
+        # image independently. Add a repo here and it starts getting built.
+        project:
+          - Mattiasg94/demo-project
+    steps:
+      - name: Checkout platform (for the agent harness)
+        uses: actions/checkout@v4
+
+      - name: Clone the project (for its Dockerfile)
+        run: git clone --depth 1 "https://github.com/${{ matrix.project }}" project
+
+      # Keyless, as its own narrow identity: this SA can only push images.
+      - uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: projects/${{ vars.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/platform-repo
+          service_account: agent-builder@ai-agent-502309.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      # Two stages sharing one daemon: the project's env image, then the agent
+      # layered on it. The env image is local to this build and never pushed.
+      - name: Build and push
+        run: |
+          NAME="$(basename "${{ matrix.project }}")"
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/agent-${NAME}:latest"
+          docker build --target env -t "${NAME}-env" project
+          docker build --build-arg "BASE_IMAGE=${NAME}-env" -t "$IMAGE" agent
+          docker push "$IMAGE"

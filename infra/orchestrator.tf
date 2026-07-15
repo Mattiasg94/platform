@@ -116,20 +116,9 @@ resource "google_storage_bucket_iam_member" "orchestrator_runs" {
   member = google_service_account.orchestrator.member
 }
 
-# Check whether the per-project agent image already exists before building it.
-resource "google_artifact_registry_repository_iam_member" "orchestrator_reader" {
-  location   = google_artifact_registry_repository.platform.location
-  repository = google_artifact_registry_repository.platform.name
-  role       = "roles/artifactregistry.reader"
-  member     = google_service_account.orchestrator.member
-}
-
-# Submit Cloud Build builds — the per-project agent image (Path B).
-resource "google_project_iam_member" "orchestrator_cloudbuild" {
-  project = var.project_id
-  role    = "roles/cloudbuild.builds.editor"
-  member  = google_service_account.orchestrator.member
-}
+# The orchestrator no longer builds or inspects images — CI builds them ahead of
+# time (see agent-builder in iam.tf), and the orchestrator only references them —
+# so it needs neither Cloud Build nor registry-read.
 
 # Create, update, and run the agent Cloud Run job. Project-scoped because creating
 # a job is a project-level action — you cannot scope "create" to a job that does

@@ -29,15 +29,11 @@ type Deps struct {
 	BaseRef   string
 }
 
-// Run builds the images, lets the agent edit once, and opens a PR. The verdict is
-// not ours to give: the project's own CI judges the PR (ADR-0010), which is why
-// there is no retry loop here. The agent's status is only a self-report — it
-// gates publishing a crashed run, nothing more.
+// Run lets the agent edit once and opens a PR. The verdict is not ours to give:
+// the project's own CI judges the PR (ADR-0010), which is why there is no retry
+// loop here. The agent's status is only a self-report — it gates publishing a
+// crashed run, nothing more.
 func Run(ctx context.Context, deps Deps) error {
-	if err := deps.Runner.EnsureImage(ctx); err != nil {
-		return err
-	}
-
 	result, err := deps.Runner.Run(ctx, prompt.Initial())
 	if err != nil {
 		return fmt.Errorf("agent pod: %w", err)

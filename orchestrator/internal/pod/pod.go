@@ -32,6 +32,5 @@ type store interface {
 
 // Runner is the pod seam (ADR-0004): the isolation tech is swappable behind it.
 type Runner interface {
-	EnsureImage(ctx context.Context) error
 	Run(ctx context.Context, prompt string) (Result, error)
 }

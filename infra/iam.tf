@@ -35,3 +35,29 @@ resource "google_secret_manager_secret_iam_member" "agent_job_claude_token" {
   role      = "roles/secretmanager.secretAccessor"
   member    = google_service_account.agent_job.member
 }
+
+# --- CI identity for building agent images ------------------------------------
+# The image-build workflow (.github/workflows/agent-images.yml) impersonates this
+# to push agent-<project> images to the registry. It is distinct from the agent's
+# runtime identity above: this one only writes images and never runs anything, so
+# a leak of it cannot touch the runs bucket or execute a job.
+resource "google_service_account" "agent_builder" {
+  account_id   = "agent-builder"
+  display_name = "Agent image builder (CI)"
+  description  = "Builds and pushes per-project agent images. Used by the agent-images GitHub workflow via workload identity federation."
+}
+
+resource "google_artifact_registry_repository_iam_member" "agent_builder_writer" {
+  location   = google_artifact_registry_repository.platform.location
+  repository = google_artifact_registry_repository.platform.name
+  role       = "roles/artifactregistry.writer"
+  member     = google_service_account.agent_builder.member
+}
+
+# Let the GitHub repo impersonate the builder through the existing pool — same
+# keyless pattern as the deployer, scoped to this one repo.
+resource "google_service_account_iam_member" "agent_builder_wif" {
+  service_account_id = google_service_account.agent_builder.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principalSet://iam.googleapis.com/projects/${data.google_project.current.number}/locations/global/workloadIdentityPools/github/attribute.repository/${var.github_repo}"
+}
