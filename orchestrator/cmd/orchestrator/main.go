@@ -35,7 +35,9 @@ func run() error {
 	defer stop()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", handleHealth)
+	// Not "/healthz": Google's frontend intercepts that path and answers it itself,
+	// so the request never reaches us. "/health" is ours.
+	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/run", handleRun)
 
 	srv := &http.Server{
