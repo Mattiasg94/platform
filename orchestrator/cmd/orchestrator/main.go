@@ -126,9 +126,9 @@ func dispatch(ctx context.Context) error {
 		return err
 	}
 
-	// Docker is still here, but demoted to the one job that genuinely needs a local
-	// daemon: building the image. The agent itself runs in the cloud.
-	builder := pod.NewBuilder(workspace, cfg.GCPProject)
+	// The image build runs on Cloud Build (no local daemon); the builder stages its
+	// context in the runs bucket.
+	builder := pod.NewBuilder(workspace, cfg.GCPProject, cfg.RunsBucket)
 
 	runner, err := pod.NewCloudRun(ctx, builder, cfg.RunsBucket, cfg.GCPProject, blackboard)
 	if err != nil {
