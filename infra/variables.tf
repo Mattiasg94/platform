@@ -9,3 +9,9 @@ variable "region" {
   type        = string
   default     = "us-central1"
 }
+
+variable "github_repo" {
+  description = "owner/name of the GitHub repo allowed to impersonate the CD deployer via workload identity federation."
+  type        = string
+  default     = "Mattiasg94/platform"
+}
