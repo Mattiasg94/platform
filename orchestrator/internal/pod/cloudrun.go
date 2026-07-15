@@ -17,54 +17,57 @@ const (
 	jobRegion      = "us-central1"
 	agentServiceAc = "agent-job@%s.iam.gserviceaccount.com"
 	claudeToken    = "claude-code-oauth-token" // infra/secrets.tf
+
+	registryHost = "us-central1-docker.pkg.dev"
+	registryRepo = "platform" // infra/registry.tf
 )
 
 var _ Runner = (*CloudRun)(nil)
 
-// CloudRun executes the agent as a Cloud Run Job. It is the same agent, the same
-// image, and the same contract as the Docker runner — the pod still learns only
-// its run id and still talks through the blackboard. What changes is that nothing
-// here is lent from a laptop: the pod runs *as* the agent-job service account, so
-// it gets its bucket access and its API key from the platform rather than from us.
+// CloudRun executes the agent as a Cloud Run Job against a *prebuilt* per-project
+// image. It builds nothing: the image agent-<project> is produced ahead of time
+// by CI (.github/workflows/agent-images.yml) from the project's own Dockerfile
+// layered with the agent harness (ADR-0009), and this only references it by name.
+// The pod still learns only its run id and still talks through the blackboard, and
+// still runs *as* the agent-job service account — it gets its bucket access and
+// its token from the platform, not from us.
 type CloudRun struct {
 	jobs       *run.JobsClient
-	builder    *Builder // owns the image: hashing, building, pushing
 	store      store
+	workspace  string // the cloned project tree shipped to the agent
+	project    string // names the prebuilt image: agent-<project>
 	bucket     string
 	gcpProject string
 }
 
-func NewCloudRun(ctx context.Context, builder *Builder, bucket, gcpProject string, blackboard store) (*CloudRun, error) {
+func NewCloudRun(ctx context.Context, workspace, project, bucket, gcpProject string, blackboard store) (*CloudRun, error) {
 	jobs, err := run.NewJobsClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("cloud run client: %w", err)
 	}
 	return &CloudRun{
 		jobs:       jobs,
-		builder:    builder,
 		store:      blackboard,
+		workspace:  workspace,
+		project:    project,
 		bucket:     bucket,
 		gcpProject: gcpProject,
 	}, nil
 }
 
-// EnsureImage resolves and publishes the image, then points the job definition at
-// it. The definition is inert and free — it is a template, not a container — so
-// the only thing a run pays for is an execution.
-func (c *CloudRun) EnsureImage(ctx context.Context) error {
-	if err := c.builder.EnsureImage(ctx); err != nil {
-		return err
-	}
-	return c.reconcileJob(ctx, c.builder.image)
-}
-
+// Run points the agent job at the project's prebuilt image, hands the pod its
+// task and workspace through the blackboard, and blocks until it finishes.
 func (c *CloudRun) Run(ctx context.Context, prompt string) (Result, error) {
 	runID := newRunID()
 	log.Printf("run %s", runID)
+
+	if err := c.reconcileJob(ctx); err != nil {
+		return Result{}, err
+	}
 	if err := c.store.PutTask(ctx, runID, prompt); err != nil {
 		return Result{}, err
 	}
-	if err := c.store.PutWorkspace(ctx, runID, c.builder.projectDir); err != nil {
+	if err := c.store.PutWorkspace(ctx, runID, c.workspace); err != nil {
 		return Result{}, err
 	}
 
@@ -83,10 +86,14 @@ func (c *CloudRun) Run(ctx context.Context, prompt string) (Result, error) {
 	return result, nil
 }
 
+// imageRef names the prebuilt per-project image. CI keeps agent-<project>:latest
+// current from the project's own Dockerfile; this only has to name it.
+func (c *CloudRun) imageRef() string {
+	return fmt.Sprintf("%s/%s/%s/agent-%s:latest", registryHost, c.gcpProject, registryRepo, c.project)
+}
+
 // execute starts one execution of the job and blocks until it finishes. RUN_ID is
-// the entire dispatch message — the claim check. Blocking is fine while the
-// orchestrator is a laptop process; a long-lived service would wait on an event
-// instead.
+// the entire dispatch message — the claim check.
 func (c *CloudRun) execute(ctx context.Context, runID string) error {
 	op, err := c.jobs.RunJob(ctx, &runpb.RunJobRequest{
 		Name: c.jobPath(),
@@ -115,17 +122,17 @@ func (c *CloudRun) execute(ctx context.Context, runID string) error {
 }
 
 // reconcileJob makes the job definition match what this run needs, creating it the
-// first time and writing it every time after. The orchestrator owns this, not
-// Terraform: the image tag is a content hash, so only the thing that computed the
-// hash knows the right value.
+// first time and writing it every time after.
 //
-// The write is unconditional on purpose. Skipping it when the image is unchanged
-// looks like a free optimisation, but the image is not the spec — the env, the
-// secrets and the service account live here too, and a change to any of them
-// would then never reach the job. An UpdateJob is idempotent and costs a couple of
-// seconds; a job definition that silently lags the code costs an afternoon.
-func (c *CloudRun) reconcileJob(ctx context.Context, image string) error {
-	job := c.jobSpec(image)
+// The write is unconditional on purpose. Skipping it looks like a free
+// optimisation, but the image is not the whole spec — the env, the secrets and the
+// service account live here too, and a change to any of them would then never
+// reach the job. An UpdateJob is idempotent and costs a couple of seconds; a job
+// definition that silently lags the code costs an afternoon. (Now that the image
+// is a stable prebuilt ref rather than a content hash only this process knows, the
+// definition could move to Terraform — a later simplification.)
+func (c *CloudRun) reconcileJob(ctx context.Context) error {
+	job := c.jobSpec(c.imageRef())
 
 	_, err := c.jobs.GetJob(ctx, &runpb.GetJobRequest{Name: c.jobPath()})
 	switch {

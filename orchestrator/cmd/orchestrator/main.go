@@ -77,10 +77,9 @@ func handleHealth(w http.ResponseWriter, _ *http.Request) {
 // handleRun triggers a run. Ingress auth is enforced by Cloud Run (the service
 // requires an authenticated caller), so there is no token check here.
 //
-// The real pipeline needs a Docker daemon to build the agent image, which the
-// container has not got — that build moves to Cloud Build in the next slice. Until
-// then a trigger only proves the service is alive and returns a placeholder.
-// RUN_PIPELINE=1 opts into the real path for a local run that has Docker.
+// The pipeline stays gated behind RUN_PIPELINE while the service's runtime env
+// (project repo, GitHub token) is still being wired; until then a trigger proves
+// the service is alive and returns a placeholder.
 func handleRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
@@ -106,9 +105,8 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// dispatch drives one task to a merge-ready PR. It is the pre-cloud composition
-// root, kept intact behind handleRun's flag until the image build moves to Cloud
-// Build and it can run inside the service.
+// dispatch drives one task to a merge-ready PR. It is the composition root, gated
+// behind handleRun's flag until the service's runtime env is wired.
 func dispatch(ctx context.Context) error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -126,11 +124,9 @@ func dispatch(ctx context.Context) error {
 		return err
 	}
 
-	// The image build runs on Cloud Build (no local daemon); the builder stages its
-	// context in the runs bucket.
-	builder := pod.NewBuilder(workspace, cfg.GCPProject, cfg.RunsBucket)
-
-	runner, err := pod.NewCloudRun(ctx, builder, cfg.RunsBucket, cfg.GCPProject, blackboard)
+	// The agent image is prebuilt per project by CI (agent-<project>); the runner
+	// only names it — nothing is built here.
+	runner, err := pod.NewCloudRun(ctx, workspace, cfg.ProjectRepo, cfg.RunsBucket, cfg.GCPProject, blackboard)
 	if err != nil {
 		return err
 	}
