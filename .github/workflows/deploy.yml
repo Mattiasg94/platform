@@ -1,0 +1,62 @@
+name: Deploy orchestrator
+
+# CD for the orchestrator service. Terraform owns the service *shell* (identity,
+# scaling, CPU); this owns the *image*. On push to main it builds the image,
+# pushes it, and rolls a new Cloud Run revision. The service's other settings are
+# left untouched, so this never fights Terraform.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "orchestrator/**"
+      - ".github/workflows/deploy.yml"
+
+# Don't let two deploys race to publish the same tag / revision.
+concurrency:
+  group: deploy-orchestrator
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # mint the OIDC token Google trades for credentials
+
+env:
+  PROJECT_ID: ai-agent-502309
+  REGION: us-central1
+  REPO: platform
+  SERVICE: orchestrator
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Keyless, same pattern as the infra workflow — but a *different*,
+      # narrower service account: this one only builds, pushes, and deploys.
+      - uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: projects/${{ vars.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/github/providers/platform-repo
+          service_account: orchestrator-deployer@ai-agent-502309.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}:${GITHUB_SHA}"
+          docker build -t "$IMAGE" orchestrator
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      # Only the image is set here. Scaling, CPU, and the service account come from
+      # Terraform and are preserved across a deploy, so the two never disagree.
+      - name: Deploy
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --image "$IMAGE" \
+            --region "$REGION" \
+            --project "$PROJECT_ID"
