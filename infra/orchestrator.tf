@@ -35,19 +35,21 @@ resource "google_cloud_run_v2_service" "orchestrator" {
   template {
     service_account = google_service_account.orchestrator.email
 
-    # Always-on: one instance always warm, CPU always allocated (cpu_idle = false)
-    # so background work is never throttled between requests. This is the setting
-    # the Temporal worker will require unchanged.
+    # Scale to zero when idle. This is an HTTP-triggered service, so it only needs
+    # to exist while a request is in flight: it costs nothing between runs and
+    # cold-starts in a second or two on the next trigger. There is nothing to turn
+    # off by hand — it turns itself off.
+    #
+    # The always-on shape (min-instances 1, CPU always allocated) returns when this
+    # becomes the Temporal worker, which must poll continuously. A poller can't
+    # scale to zero; an HTTP trigger can.
     scaling {
-      min_instance_count = 1
+      min_instance_count = 0
       max_instance_count = 1
     }
 
     containers {
       image = "us-docker.pkg.dev/cloudrun/container/hello"
-      resources {
-        cpu_idle = false
-      }
     }
   }
 
