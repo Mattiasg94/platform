@@ -61,7 +61,7 @@ func (c *CloudRun) Run(ctx context.Context, prompt string) (Result, error) {
 	runID := newRunID()
 	log.Printf("run %s", runID)
 
-	if err := c.reconcileJob(ctx); err != nil {
+	if err := c.configureJob(ctx); err != nil {
 		return Result{}, err
 	}
 	if err := c.store.PutTask(ctx, runID, prompt); err != nil {
@@ -121,39 +121,24 @@ func (c *CloudRun) execute(ctx context.Context, runID string) error {
 	return nil
 }
 
-// reconcileJob makes the job definition match what this run needs, creating it the
-// first time and writing it every time after.
+// configureJob points the pre-existing agent job at this project's image and this
+// run's env, and blocks until the update lands.
 //
-// The write is unconditional on purpose. Skipping it looks like a free
-// optimisation, but the image is not the whole spec — the env, the secrets and the
-// service account live here too, and a change to any of them would then never
-// reach the job. An UpdateJob is idempotent and costs a couple of seconds; a job
-// definition that silently lags the code costs an afternoon. (Now that the image
-// is a stable prebuilt ref rather than a content hash only this process knows, the
-// definition could move to Terraform — a later simplification.)
-func (c *CloudRun) reconcileJob(ctx context.Context) error {
+// The job's *existence* belongs to Terraform (infra/agent.tf); the orchestrator only
+// ever authors its contents. So this always updates and never creates — a job that
+// is not there means infra was never applied, which is a real error to surface, not a
+// cue to create one. The update is unconditional because the image is not the whole
+// spec — the env, the secret and the service account live here too — and rewriting it
+// every run is also what re-resolves the mutable :latest tag to the freshest build.
+func (c *CloudRun) configureJob(ctx context.Context) error {
 	job := c.jobSpec(c.imageRef())
-
-	_, err := c.jobs.GetJob(ctx, &runpb.GetJobRequest{Name: c.jobPath()})
-	switch {
-	case status.Code(err) == codes.NotFound:
-		op, err := c.jobs.CreateJob(ctx, &runpb.CreateJobRequest{
-			Parent: c.parent(),
-			JobId:  jobName,
-			Job:    job,
-		})
-		if err != nil {
-			return fmt.Errorf("create job: %w", err)
-		}
-		_, err = op.Wait(ctx)
-		return err
-	case err != nil:
-		return fmt.Errorf("get job: %w", err)
-	}
-
 	job.Name = c.jobPath()
+
 	op, err := c.jobs.UpdateJob(ctx, &runpb.UpdateJobRequest{Job: job})
 	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return fmt.Errorf("agent job %q not found — has infra (agent.tf) been applied? %w", jobName, err)
+		}
 		return fmt.Errorf("update job: %w", err)
 	}
 	_, err = op.Wait(ctx)
