@@ -50,6 +50,37 @@ resource "google_cloud_run_v2_service" "orchestrator" {
 
     containers {
       image = "us-docker.pkg.dev/cloudrun/container/hello"
+
+      # The run pipeline is live. These are what config.Load needs to drive a real
+      # run; RUN_PIPELINE is the flag that flips handleRun from the stub to dispatch().
+      # CD owns the image and preserves everything else, so this env survives a deploy.
+      env {
+        name  = "RUN_PIPELINE"
+        value = "1"
+      }
+      env {
+        name  = "PROJECT_REPO_URL"
+        value = var.project_repo_url
+      }
+      env {
+        name  = "RUNS_BUCKET"
+        value = google_storage_bucket.runs.name
+      }
+      env {
+        name  = "GCP_PROJECT"
+        value = var.project_id
+      }
+      # Value added out of band (secrets.tf); a version must already exist or the
+      # revision fails to deploy. The orchestrator SA has accessor on it below.
+      env {
+        name = "GITHUB_TOKEN"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.github_token.secret_id
+            version = "latest"
+          }
+        }
+      }
     }
   }
 
@@ -145,6 +176,17 @@ resource "google_service_account_iam_member" "orchestrator_actas_agent" {
 # Read the GitHub token to push branches and open PRs.
 resource "google_secret_manager_secret_iam_member" "orchestrator_github_token" {
   secret_id = google_secret_manager_secret.github_token.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = google_service_account.orchestrator.member
+}
+
+# The orchestrator names the Claude-token secret in the agent job's spec every run
+# (internal/pod/cloudrun.go, jobSpec). Writing a secretKeyRef into a job requires the
+# writer to read the secret it points at — so, scoped to that one secret. The
+# orchestrator never uses the token; only the agent job's own identity does. If this
+# turns out unnecessary once the pipeline runs for real, it is a one-line revert.
+resource "google_secret_manager_secret_iam_member" "orchestrator_claude_token" {
+  secret_id = google_secret_manager_secret.claude_code_oauth_token.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = google_service_account.orchestrator.member
 }
