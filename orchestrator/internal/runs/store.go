@@ -10,6 +10,7 @@ import (
 	"archive/tar"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -60,20 +61,25 @@ func (s *Store) PutWorkspace(ctx context.Context, runID, dir string) error {
 	})
 }
 
-// GetResult returns the agent's result as raw bytes. Decoding it is package pod's
-// job: the contract belongs with the seam that owns it, not with the transport.
-func (s *Store) GetResult(ctx context.Context, runID string) ([]byte, error) {
+// GetResult returns the agent's result as raw bytes, and whether it has been written
+// yet. A run still in progress has no result object; that is a normal "not yet"
+// (found == false, err == nil), not an error, so a caller can poll. Decoding the
+// bytes is package pod's job: the contract belongs with the seam that owns it.
+func (s *Store) GetResult(ctx context.Context, runID string) ([]byte, bool, error) {
 	r, err := s.bucket.Object(s.object(runID, resultObject)).NewReader(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("open result: %w", err)
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("open result: %w", err)
 	}
 	defer func() { _ = r.Close() }()
 
 	body, err := io.ReadAll(r)
 	if err != nil {
-		return nil, fmt.Errorf("read result: %w", err)
+		return nil, false, fmt.Errorf("read result: %w", err)
 	}
-	return body, nil
+	return body, true, nil
 }
 
 func (s *Store) object(runID, name string) string {
