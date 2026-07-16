@@ -120,14 +120,17 @@ resource "google_storage_bucket_iam_member" "orchestrator_runs" {
 # time (see agent-builder in iam.tf), and the orchestrator only references them —
 # so it needs neither Cloud Build nor registry-read.
 
-# Create, update, and run the agent Cloud Run job. Project-scoped because creating
-# a job is a project-level action — you cannot scope "create" to a job that does
-# not exist yet. Broader than ideal; tightenable later by having Terraform own the
-# agent job shell so this can drop to run+update on that one job.
-resource "google_project_iam_member" "orchestrator_run" {
-  project = var.project_id
-  role    = "roles/run.developer"
-  member  = google_service_account.orchestrator.member
+# Update and run the agent Cloud Run job — scoped to that one job, not the project.
+# The job now exists ahead of time (agent.tf), so the orchestrator only points it at
+# the project's image, sets the run's env, and executes it; it never *creates* a job,
+# which is the one action that cannot be scoped below the project. That is what lets
+# this grant be resource-scoped — and what lets terraform-ci, which cannot edit
+# project-level IAM, apply it at all.
+resource "google_cloud_run_v2_job_iam_member" "orchestrator_run" {
+  location = google_cloud_run_v2_job.agent.location
+  name     = google_cloud_run_v2_job.agent.name
+  role     = "roles/run.developer"
+  member   = google_service_account.orchestrator.member
 }
 
 # Running the agent job means acting as the agent's powerless identity, so the
