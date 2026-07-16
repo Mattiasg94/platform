@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	run "cloud.google.com/go/run/apiv2"
 	"cloud.google.com/go/run/apiv2/runpb"
@@ -20,6 +21,17 @@ const (
 
 	registryHost = "us-central1-docker.pkg.dev"
 	registryRepo = "platform" // infra/registry.tf
+)
+
+const (
+	// How the orchestrator waits without ever reading a Cloud Run *operation* — a
+	// resource that can only be granted project-wide, which the deliberately
+	// job-scoped orchestrator is not. It polls resources it already has access to
+	// instead: the job (to confirm an update landed) and the blackboard (for the
+	// result). pollInterval spaces the polls; the two timeouts bound them.
+	pollInterval     = 3 * time.Second
+	jobUpdateTimeout = 60 * time.Second
+	runTimeout       = 20 * time.Minute
 )
 
 var _ Runner = (*CloudRun)(nil)
@@ -75,9 +87,9 @@ func (c *CloudRun) Run(ctx context.Context, prompt string) (Result, error) {
 		return Result{}, err
 	}
 
-	body, err := c.store.GetResult(ctx, runID)
+	body, err := c.awaitResult(ctx, runID)
 	if err != nil {
-		return Result{}, fmt.Errorf("run %s produced no result (see its Cloud Logging trace): %w", runID, err)
+		return Result{}, err
 	}
 	var result Result
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -86,16 +98,41 @@ func (c *CloudRun) Run(ctx context.Context, prompt string) (Result, error) {
 	return result, nil
 }
 
+// awaitResult polls the blackboard until the agent writes its result, or the deadline
+// passes. The result the agent leaves *is* the run's completion signal — the source
+// of truth anyway — and reading it needs nothing beyond the bucket access the
+// orchestrator already holds, unlike waiting on the Cloud Run run operation.
+func (c *CloudRun) awaitResult(ctx context.Context, runID string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, runTimeout)
+	defer cancel()
+	for {
+		body, found, err := c.store.GetResult(ctx, runID)
+		if err != nil {
+			return nil, fmt.Errorf("read result of run %s: %w", runID, err)
+		}
+		if found {
+			return body, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("run %s produced no result within %s (see its Cloud Logging trace): %w", runID, runTimeout, ctx.Err())
+		case <-time.After(pollInterval):
+		}
+	}
+}
+
 // imageRef names the prebuilt per-project image. CI keeps agent-<project>:latest
 // current from the project's own Dockerfile; this only has to name it.
 func (c *CloudRun) imageRef() string {
 	return fmt.Sprintf("%s/%s/%s/agent-%s:latest", registryHost, c.gcpProject, registryRepo, c.project)
 }
 
-// execute starts one execution of the job and blocks until it finishes. RUN_ID is
-// the entire dispatch message — the claim check.
+// execute starts one execution of the job. RUN_ID is the entire dispatch message —
+// the claim check. It does not wait on the returned run operation (that read is
+// project-wide only); the execution's outcome is observed on the blackboard instead,
+// where the pod writes its result, and in Cloud Logging.
 func (c *CloudRun) execute(ctx context.Context, runID string) error {
-	op, err := c.jobs.RunJob(ctx, &runpb.RunJobRequest{
+	_, err := c.jobs.RunJob(ctx, &runpb.RunJobRequest{
 		Name: c.jobPath(),
 		Overrides: &runpb.RunJobRequest_Overrides{
 			ContainerOverrides: []*runpb.RunJobRequest_Overrides_ContainerOverride{{
@@ -108,21 +145,11 @@ func (c *CloudRun) execute(ctx context.Context, runID string) error {
 	if err != nil {
 		return fmt.Errorf("start execution: %w", err)
 	}
-
-	execution, err := op.Wait(ctx)
-	if err != nil {
-		// A failed execution is not an error here: the pod may still have written a
-		// result explaining itself, and that is more informative than an exit code.
-		log.Printf("execution finished unhappily: %v", err)
-		return nil
-	}
-	log.Printf("execution %s: %d succeeded, %d failed",
-		execution.GetName(), execution.GetSucceededCount(), execution.GetFailedCount())
 	return nil
 }
 
 // configureJob points the pre-existing agent job at this project's image and this
-// run's env, and blocks until the update lands.
+// run's env, and returns once the job reports that image.
 //
 // The job's *existence* belongs to Terraform (infra/agent.tf); the orchestrator only
 // ever authors its contents. So this always updates and never creates — a job that
@@ -130,19 +157,53 @@ func (c *CloudRun) execute(ctx context.Context, runID string) error {
 // cue to create one. The update is unconditional because the image is not the whole
 // spec — the env, the secret and the service account live here too — and rewriting it
 // every run is also what re-resolves the mutable :latest tag to the freshest build.
+//
+// It confirms the update by polling the job (a job-scoped read) rather than waiting
+// on the returned operation: an operation can only be read with a project-wide grant,
+// and the orchestrator is deliberately scoped to this one job.
 func (c *CloudRun) configureJob(ctx context.Context) error {
-	job := c.jobSpec(c.imageRef())
+	want := c.imageRef()
+	job := c.jobSpec(want)
 	job.Name = c.jobPath()
 
-	op, err := c.jobs.UpdateJob(ctx, &runpb.UpdateJobRequest{Job: job})
-	if err != nil {
+	if _, err := c.jobs.UpdateJob(ctx, &runpb.UpdateJobRequest{Job: job}); err != nil {
 		if status.Code(err) == codes.NotFound {
 			return fmt.Errorf("agent job %q not found — has infra (agent.tf) been applied? %w", jobName, err)
 		}
 		return fmt.Errorf("update job: %w", err)
 	}
-	_, err = op.Wait(ctx)
-	return err
+	return c.awaitJobImage(ctx, want)
+}
+
+// awaitJobImage blocks until GetJob reports want, or the deadline passes. Reading the
+// job is scoped to this one job; reading the update's operation would not be.
+func (c *CloudRun) awaitJobImage(ctx context.Context, want string) error {
+	ctx, cancel := context.WithTimeout(ctx, jobUpdateTimeout)
+	defer cancel()
+	for {
+		job, err := c.jobs.GetJob(ctx, &runpb.GetJobRequest{Name: c.jobPath()})
+		if err != nil {
+			return fmt.Errorf("get job: %w", err)
+		}
+		if currentImage(job) == want {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("agent job did not report image %q within %s: %w", want, jobUpdateTimeout, ctx.Err())
+		case <-time.After(pollInterval):
+		}
+	}
+}
+
+// currentImage reads the image the job's task template currently declares, guarding
+// the nested getters so an unexpectedly empty job reads as "" rather than panicking.
+func currentImage(j *runpb.Job) string {
+	containers := j.GetTemplate().GetTemplate().GetContainers()
+	if len(containers) == 0 {
+		return ""
+	}
+	return containers[0].GetImage()
 }
 
 func (c *CloudRun) jobSpec(image string) *runpb.Job {

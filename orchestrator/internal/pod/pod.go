@@ -27,7 +27,10 @@ type Result struct {
 type store interface {
 	PutTask(ctx context.Context, runID, task string) error
 	PutWorkspace(ctx context.Context, runID, dir string) error
-	GetResult(ctx context.Context, runID string) ([]byte, error)
+	// GetResult reports whether the result has been written yet: a run still in
+	// progress has no result object, which is a normal "not yet" (found == false,
+	// err == nil), not an error — so the runner can poll for it.
+	GetResult(ctx context.Context, runID string) (body []byte, found bool, err error)
 }
 
 // Runner is the pod seam (ADR-0004): the isolation tech is swappable behind it.
