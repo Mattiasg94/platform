@@ -15,3 +15,9 @@ variable "github_repo" {
   type        = string
   default     = "Mattiasg94/platform"
 }
+
+variable "project_repo_url" {
+  description = "The project repo the orchestrator drives: cloned per run, and its name selects the prebuilt agent-<name> image. Currently the demo project."
+  type        = string
+  default     = "https://github.com/Mattiasg94/demo-project"
+}
