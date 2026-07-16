@@ -147,9 +147,17 @@ resource "google_storage_bucket_iam_member" "orchestrator_runs" {
   member = google_service_account.orchestrator.member
 }
 
-# The orchestrator no longer builds or inspects images — CI builds them ahead of
-# time (see agent-builder in iam.tf), and the orchestrator only references them —
-# so it needs neither Cloud Build nor registry-read.
+# The orchestrator no longer builds images — CI does that ahead of time (see
+# agent-builder in iam.tf) — so it needs no Cloud Build. It does still need to *read*
+# the registry, though: when it points the agent job at agent-<project>, Cloud Run
+# admission-checks that the caller can pull that image, and refuses the update
+# otherwise. Read, not write; scoped to the one repo.
+resource "google_artifact_registry_repository_iam_member" "orchestrator_reader" {
+  location   = google_artifact_registry_repository.platform.location
+  repository = google_artifact_registry_repository.platform.name
+  role       = "roles/artifactregistry.reader"
+  member     = google_service_account.orchestrator.member
+}
 
 # Update and run the agent Cloud Run job — scoped to that one job, not the project.
 # The job now exists ahead of time (agent.tf), so the orchestrator only points it at
